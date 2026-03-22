@@ -2,6 +2,8 @@
 
 This repository contains the training and evaluation code used for multiclass oral lesion classification experiments (healthy, benign lesion, OPMD, cancer).
 
+GitHub: <https://github.com/FerSaiyan/oral-lesion-multisource-classification>
+
 ## What is included
 
 - Optuna-based training pipeline for EfficientNet and ViT (`run_optuna_study.py`)
@@ -77,7 +79,7 @@ For hold-out evaluation script:
 
 Trained model weights are released separately on Hugging Face:
 
-- `<https://huggingface.co/<org>/<collection>>`
+- `<https://huggingface.co/<org-or-user>/<model-collection>>`
 
 Model-weight license details: see `MODEL_WEIGHTS_LICENSE.md`.
 

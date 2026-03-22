@@ -4,7 +4,7 @@
 
 ```latex
 \section*{Code and model availability}
-Code used for training and evaluation is publicly available at \url{https://github.com/<user-or-org>/<repo>} (release v1.0.0) \cite{CodeRepo2026}. Trained model checkpoints are available at \url{https://huggingface.co/<user-or-org>/<model-collection>} \cite{ModelRepo2026}.
+Code used for training and evaluation is publicly available at \url{https://github.com/FerSaiyan/oral-lesion-multisource-classification} (release v1.0.0) \cite{CodeRepo2026}. Trained model checkpoints are available at \url{https://huggingface.co/<user-or-org>/<model-collection>} \cite{ModelRepo2026}.
 ```
 
 ## Data availability section
@@ -22,7 +22,7 @@ The internal clinical dataset contains sensitive patient data and cannot be made
   title        = {Multisource Oral Lesion Classification: Training and Evaluation Code},
   year         = {2026},
   howpublished = {GitHub repository},
-  url          = {https://github.com/<user-or-org>/<repo>},
+  url          = {https://github.com/FerSaiyan/oral-lesion-multisource-classification},
   note         = {Accessed 22 March 2026}
 }
 
