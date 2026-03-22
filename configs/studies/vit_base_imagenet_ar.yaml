@@ -1,0 +1,39 @@
+study:
+  seed: 42
+  device: "cuda:0"
+  base_data_dir: "."
+  optuna_results_dir: "results/optuna_studies"
+  study_name_prefix: "ViT_base_imagenet_AR"
+  n_optuna_trials: 50
+  optuna_timeout: null
+  batch_size: 8
+  num_workers: 8
+  require_precomputed_splits: true
+  dataset_variant: "ar_preserve"
+  resize_mode: "preserve"
+  class_weights: true      # still OK; combined with sample_weight in loss
+  weighted_sampler: false
+  images_folder: null
+  train_csv_path: "data/processed/multisource_train.csv"
+  val_csv_path:   "data/processed/multisource_val.csv"
+  test_csv_path:  "data/processed/multisource_test.csv"
+  pseudolabel:
+    enabled: false
+  mlflow:
+    enabled: true
+    tracking_uri: "file:./mlruns"
+    experiment_name: "vit_base_imagenet_AR"
+    metric_name: "value"
+  search_space:
+    num_epochs_finetune: {type: fixed, value: 50}
+    patience: {type: fixed, value: 5}
+  finetune:
+    strategy: "head_warmup"
+    head_warmup_epochs: 15
+
+models:
+  - name: vit_base_imagenet
+    model_type: vit
+    vit_model_name: "vit_base_patch16_224"
+    pretrained_source: imagenet_timm
+    img_size: 224

@@ -1,0 +1,37 @@
+study:
+  seed: 42
+  device: "cuda:0"
+  base_data_dir: "."  # so relative CSV paths are from repo root
+  optuna_results_dir: "results/optuna_studies_multisource"
+  study_name_prefix: "EffNet_b3_multisource"
+  n_optuna_trials: 50
+  batch_size: 32
+  num_workers: 8
+  require_precomputed_splits: true
+  dataset_variant: "multisource_coarse"
+  resize_mode: "preserve"
+  class_weights: true      # still OK; combined with sample_weight in loss
+  weighted_sampler: false
+  images_folder: null
+  train_csv_path: "data/processed/multisource_train.csv"
+  val_csv_path:   "data/processed/multisource_val.csv"
+  test_csv_path:  "data/processed/multisource_test.csv"
+  pseudolabel:
+    enabled: false
+  mlflow:
+    enabled: true
+    tracking_uri: "file:./mlruns"
+    experiment_name: "effnet_b3_multisource"
+  search_space:
+    num_epochs_finetune: {type: fixed, value: 50}
+    patience: {type: fixed, value: 5}
+  finetune:
+    strategy: "head_warmup"
+    head_warmup_epochs: 15
+
+models:
+  - name: effnet_b3_multisource
+    model_type: effnet
+    enet_backbone: "tf_efficientnet-b3_ns"
+    pretrained_source: imagenet
+    img_size: 384
