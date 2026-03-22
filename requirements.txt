@@ -16,3 +16,6 @@ seaborn>=0.13.0
 plotly>=5.18.0
 kaleido>=0.2.1
 python-dotenv>=1.0.0
+requests>=2.31.0
+tqdm>=4.66.0
+openai>=1.50.0
