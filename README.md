@@ -9,6 +9,7 @@ GitHub: <https://github.com/FerSaiyan/oral-lesion-multisource-classification>
 - Optuna-based training pipeline for EfficientNet and ViT (`run_optuna_study.py`)
 - Batch confusion-matrix and hold-out evaluation script (`batch_confusion_eval_multisource.py`)
 - Phrase-level clinician free-text classification pipeline (`scripts/inference/run_phrase_classifier.py`, `src/inference/phrase_classifier.py`)
+- Redacted reproducible notebook for LLM phrase classification (`notebooks/public/llm_phrase_classification_demo.ipynb`)
 - Core model, dataset, training, and experiment utilities under `src/`
 - Study configuration files under `configs/studies/`
 
