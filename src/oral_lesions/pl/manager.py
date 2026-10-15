@@ -1,5 +1,6 @@
 import os
 from typing import Any, Dict, Optional, Tuple
+from numbers import Integral
 
 import torch
 from torch.utils.data import DataLoader
@@ -7,7 +8,7 @@ from torch.utils.data import DataLoader
 from .teacher import run_teacher_inference_if_needed
 from ...utils import getenv_path
 from .selection import build_pseudolabel_csv
-from ..data.datasets import OralLesionsDatasetCSV
+from ..data.datasets import MultiSourceDatasetCSV
 import pandas as pd
 
 
@@ -72,7 +73,13 @@ def build_pl_loader_from_cfg(
         pl_high_thr=pl_high_thr,
         pl_density_min_p=pl_density_min_p,
         pl_density_factor=pl_density_factor,
+        sample_weight_mode=str(pl_cfg.get('sample_weight_mode', 'confidence')),
+        sample_weight_floor=float(pl_cfg.get('sample_weight_floor', 0.2)),
     )
+    stats = dict(stats or {})
+    pseudo_count = int(sum(int(v) for v in stats.values() if isinstance(v, Integral)))
+    stats["_pseudo_csv_path"] = pseudo_csv
+    stats["_pseudo_count"] = pseudo_count
 
     if not (os.path.exists(pseudo_csv) and os.path.getsize(pseudo_csv) > 0):
         print("[PL] Pseudo-label CSV missing or empty.")
@@ -84,7 +91,14 @@ def build_pl_loader_from_cfg(
     except Exception:
         train_classes = None
 
-    ds_pl = OralLesionsDatasetCSV(pseudo_csv, unlabeled_images, transform=pseudo_transform, classes=train_classes)
+    ds_pl = MultiSourceDatasetCSV(
+        pseudo_csv,
+        unlabeled_images,
+        transform=pseudo_transform,
+        label_col="diagnosis_categories",
+        weight_col="sample_weight",
+        classes=train_classes,
+    )
     if len(ds_pl) == 0:
         print("[PL] Pseudo dataset empty after CSV filtering.")
         return None, stats

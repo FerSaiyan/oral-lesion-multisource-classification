@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <application android:label="BPEX Deployment Benchmark"
+        android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libvulkan.so" android:required="false" />
+        <activity android:name=".BenchmarkActivity" android:exported="true" />
+    </application>
+</manifest>

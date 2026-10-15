@@ -20,11 +20,12 @@ except Exception:
 
 
 class Trainer:
-    def __init__(self, device, criterion, optimizer, scheduler=None, scaler=None, callbacks=()):
+    def __init__(self, device, criterion, optimizer, scheduler=None, scaler=None, callbacks=(), normalize_sample_weights=False):
         self.device, self.criterion = device, criterion
         self.optimizer, self.scheduler = optimizer, scheduler
         self.scaler = scaler or torch.amp.GradScaler(enabled=False)
         self.callbacks = list(callbacks)
+        self.normalize_sample_weights = bool(normalize_sample_weights)
 
     @staticmethod
     def _unpack_batch(batch):
@@ -47,11 +48,12 @@ class Trainer:
             x, y, w = batch, None, None
         return x, y, w
 
-    @staticmethod
-    def _reduce_loss(loss_vec, weight_tensor=None):
+    def _reduce_loss(self, loss_vec, weight_tensor=None):
         """Handle vector or scalar loss and optional per-sample weights."""
         if loss_vec.dim() > 0:
             if weight_tensor is not None:
+                if self.normalize_sample_weights:
+                    return (loss_vec * weight_tensor).sum() / weight_tensor.sum().clamp_min(1e-12)
                 return (loss_vec * weight_tensor).mean()
             return loss_vec.mean()
         return loss_vec
@@ -199,16 +201,18 @@ class Trainer:
                         sup_loss = self._reduce_loss(sup_loss_vec, ws)
                         total = total + sup_loss
 
-                    # Pseudo-labeled batch (no sample weights)
+                    # Pseudo-labeled batch (may include sample weights)
                     if pb is not None:
-                        xp, yp, _ = self._unpack_batch(pb)
+                        xp, yp, wp = self._unpack_batch(pb)
                         xp = xp.to(self.device, non_blocking=True)
                         if yp is not None:
                             yp = yp.to(self.device, non_blocking=True)
+                        if wp is not None:
+                            wp = wp.to(self.device, dtype=torch.float32, non_blocking=True)
 
                         pl_logits = model(xp)
                         pl_loss_vec = self.criterion(pl_logits, yp)
-                        pl_loss = self._reduce_loss(pl_loss_vec, None)
+                        pl_loss = self._reduce_loss(pl_loss_vec, wp)
                         total = total + lam * pl_loss
 
                 if self.scaler.is_enabled():
@@ -337,11 +341,11 @@ class Trainer:
             history.append(row)
             pd.DataFrame(history).to_csv(log_csv_path, index=False)
 
-            for cb in self.callbacks:
-                cb.update(model, f1_macro, ckpt_path)
-
             if on_epoch_end is not None:
                 on_epoch_end(epoch, row)
+
+            for cb in self.callbacks:
+                cb.update(model, f1_macro, ckpt_path)
 
             if f1_macro > best_f1:
                 best_f1 = f1_macro

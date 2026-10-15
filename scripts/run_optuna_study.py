@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 import time
@@ -7,93 +9,101 @@ from typing import Any, Dict, List, Optional
 import tempfile
 import shutil
 import gc
-
-import pandas as pd
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, WeightedRandomSampler
-from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from torch.amp import GradScaler
-from torch.utils.data.dataloader import _MultiProcessingDataLoaderIter as _MPDataLoaderIter
-import multiprocessing.queues as _mp_queues
-import torch.utils.data._utils.pin_memory as _pin_memory_utils
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import f1_score
-import optuna
-try:
-    from optuna.integration import MLflowCallback  # Optuna → MLflow integration
-except Exception:
-    MLflowCallback = None  # optional
-try:
-    import mlflow  # Optional runtime dep
-    mlflow_import_error = None
-except Exception as e:
-    mlflow = None
-    mlflow_import_error = e
-
-_orig_mp_del = getattr(_MPDataLoaderIter, "__del__", None)
-if _orig_mp_del is not None:
-    def _safe_mp_del(self):
-        try:
-            _orig_mp_del(self)
-        except AssertionError as exc:
-            if "can only test a child process" not in str(exc):
-                raise
-    _MPDataLoaderIter.__del__ = _safe_mp_del
-
-_orig_queue_feed = getattr(_mp_queues.Queue, "_feed", None)
-if _orig_queue_feed is not None:
-    def _safe_queue_feed(*args, **kwargs):
-        try:
-            _orig_queue_feed(*args, **kwargs)
-        except BrokenPipeError:
-            # Happens when the main process closes the pipe while
-            # DataLoader workers are still feeding; safe to ignore.
-            pass
-    _mp_queues.Queue._feed = _safe_queue_feed
-
-_orig_pin_memory_loop = getattr(_pin_memory_utils, "_pin_memory_loop", None)
-if _orig_pin_memory_loop is not None:
-    def _safe_pin_memory_loop(*args, **kwargs):
-        try:
-            _orig_pin_memory_loop(*args, **kwargs)
-        except (ConnectionResetError, BrokenPipeError):
-            # Can happen at shutdown when worker processes have already exited.
-            # Safe to ignore for our training loop.
-            pass
-    _pin_memory_utils._pin_memory_loop = _safe_pin_memory_loop
+import hashlib
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if PROJECT_ROOT not in sys.path:
     sys.path.append(PROJECT_ROOT)
 
 from src.utils import set_seed, load_dotenv, getenv_path
-from src.oral_lesions.data import (
-    OralLesionsDatasetCSV,
-    MultiSourceDatasetCSV,
-    build_transforms,
-    build_pseudo_augs,
-    build_dataloaders,
-    ensure_splits,
-    infer_dataset_variant,
-)
-from src.oral_lesions.models.factory import create_model
-from src.oral_lesions.pl.manager import build_pl_loader_from_cfg
-from src.schedulers import GradualWarmupScheduler
-from src.oral_lesions.engine.trainer import Trainer
 from src.exp.dvc_utils import get_git_info, collect_dvc_versions
-from src.oral_lesions.engine.callbacks import CheckpointSaver, EarlyStopping
 from src.exp.config import load_config, resolve_device, coalesce_path
 from src.exp.tracking import canonicalize_tracking_uri
-from src.oral_lesions.hpo.utils import (
-    default_search_space,
-    merge_search_space,
-    suggest_from_space,
-    load_top_params_from_csv,
-    enqueue_warmstart_trials,
+
+
+FIXED_TRAINING_KEYS = (
+    'finetune_lr',
+    'num_epochs_finetune',
+    'patience',
+    'multiplier',
+    'warmup_epochs',
+    'dropout_rate',
 )
+
+
+def fixed_search_values(search_space: Dict[str, Any]) -> Dict[str, Any]:
+    """Return fixed training values or reject a partly searchable configuration."""
+    values = {}
+    for key in FIXED_TRAINING_KEYS:
+        spec = search_space.get(key)
+        if not isinstance(spec, dict) or spec.get('type') != 'fixed' or spec.get('value') is None:
+            raise ValueError(
+                f"execution_mode=fixed_single_fit requires study.search_space.{key} "
+                "to have type=fixed and a value"
+            )
+        values[key] = spec['value']
+    return values
+
+
+def _file_sha256(path: str | None) -> str | None:
+    if not path or not os.path.isfile(path):
+        return None
+    digest = hashlib.sha256()
+    with open(path, 'rb') as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _dataset_version_tags(study_cfg: Dict[str, Any], named_paths: Dict[str, Optional[str]]) -> Dict[str, str]:
+    if study_cfg.get('dataset_provenance') == 'frozen_manifest_sha256':
+        tags = {'dataset_provenance': 'frozen_manifest_sha256'}
+        for split in ('train_csv', 'val_csv'):
+            digest = _file_sha256(named_paths.get(split))
+            if digest is None:
+                raise FileNotFoundError(f'Frozen development manifest missing: {split}')
+            tags[f'manifest_{split}_sha256'] = digest
+        if study_cfg.get('frozen_plan_sha256'):
+            tags['frozen_plan_sha256'] = study_cfg['frozen_plan_sha256']
+        return tags
+    return collect_dvc_versions(PROJECT_ROOT, named_paths)
+
+
+def _install_torch_mp_fixes() -> None:
+    """Apply monkey-patches for torch multiprocessing robustness.
+    Must be called after torch is imported (at runtime, not at module level).
+    """
+    from torch.utils.data.dataloader import _MultiProcessingDataLoaderIter as _MPDataLoaderIter
+    import multiprocessing.queues as _mp_queues
+    import torch.utils.data._utils.pin_memory as _pin_memory_utils
+
+    _orig_mp_del = getattr(_MPDataLoaderIter, "__del__", None)
+    if _orig_mp_del is not None:
+        def _safe_mp_del(self):
+            try:
+                _orig_mp_del(self)
+            except AssertionError as exc:
+                if "can only test a child process" not in str(exc):
+                    raise
+        _MPDataLoaderIter.__del__ = _safe_mp_del
+
+    _orig_queue_feed = getattr(_mp_queues.Queue, "_feed", None)
+    if _orig_queue_feed is not None:
+        def _safe_queue_feed(*args, **kwargs):
+            try:
+                _orig_queue_feed(*args, **kwargs)
+            except BrokenPipeError:
+                pass
+        _mp_queues.Queue._feed = _safe_queue_feed
+
+    _orig_pin_memory_loop = getattr(_pin_memory_utils, "_pin_memory_loop", None)
+    if _orig_pin_memory_loop is not None:
+        def _safe_pin_memory_loop(*args, **kwargs):
+            try:
+                _orig_pin_memory_loop(*args, **kwargs)
+            except (ConnectionResetError, BrokenPipeError):
+                pass
+        _pin_memory_utils._pin_memory_loop = _safe_pin_memory_loop
 
 
 def _resolve_finetune_strategy(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -211,10 +221,64 @@ def _set_backbone_trainable_vit(model: nn.Module, train_backbone: bool, gradual_
 
 
 def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str, Any]:
+    # --- Heavy / optional imports (not needed at module level for --help) ---
+    import pandas as pd
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    from torch.utils.data import DataLoader, WeightedRandomSampler
+    from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+    from torch.amp import GradScaler
+    import optuna
+    try:
+        import mlflow  # Optional runtime dep
+        mlflow_import_error = None
+    except Exception as e:
+        mlflow = None
+        mlflow_import_error = e
+
+    # --- Project-level imports (heavy transitive deps like cv2 / torch, deferred from module level) ---
+    from src.oral_lesions.data import (
+        OralLesionsDatasetCSV,
+        MultiSourceDatasetCSV,
+        build_transforms,
+        build_pseudo_augs,
+        build_dataloaders,
+        ensure_splits,
+        infer_dataset_variant,
+    )
+    from src.oral_lesions.models.factory import create_model
+    from src.oral_lesions.pl.manager import build_pl_loader_from_cfg
+    from src.schedulers import GradualWarmupScheduler
+    from src.oral_lesions.engine.trainer import Trainer
+    from src.oral_lesions.engine.callbacks import CheckpointSaver, EarlyStopping
+    from src.oral_lesions.hpo.utils import (
+        default_search_space,
+        merge_search_space,
+        suggest_from_space,
+        load_top_params_from_csv,
+        enqueue_warmstart_trials,
+    )
+
+    _install_torch_mp_fixes()
+    # --- End deferred imports ---
+
     # Global
     seed = int(study_cfg.get('seed', 42))
     set_seed(seed)
     device = resolve_device(study_cfg.get('device'))
+
+    def _release_cuda_memory() -> None:
+        if device.type != 'cuda':
+            return
+        try:
+            gc.collect()
+        except Exception:
+            pass
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
     # Results dir: env OPTUNA_RESULTS_DIR > cfg > repo default.
     # If a relative path is provided (common in YAML), resolve it from PROJECT_ROOT
     # instead of the current working directory so that notebook runs and CLI runs
@@ -251,12 +315,44 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     train_csv = coalesce_path(study_cfg.get('train_csv_path'), env_key='TRAIN_CSV', default=train_csv_default)
     val_csv = coalesce_path(study_cfg.get('val_csv_path'), env_key='VAL_CSV', default=val_csv_default)
     # Optional explicit test split (e.g., multisource_test.csv)
-    test_csv = coalesce_path(study_cfg.get('test_csv_path'), env_key='TEST_CSV', default=None, must_exist=False)
+    if 'test_csv_path' in study_cfg and study_cfg['test_csv_path'] is None:
+        # An explicit null disables test evaluation even when TEST_CSV is set remotely.
+        test_csv = None
+    else:
+        test_csv = coalesce_path(study_cfg.get('test_csv_path'), env_key='TEST_CSV', default=None, must_exist=False)
 
     # If True, require precomputed SGKF (or equivalent) splits; do not fallback.
     require_precomputed = bool(study_cfg.get('require_precomputed_splits', False))
     ensure_splits(train_csv, val_csv, labels_csv_path, seed, require_precomputed=require_precomputed)
     print(f"Data config → images_folder='{images_folder}', train_csv='{train_csv}', val_csv='{val_csv}', test_csv='{test_csv}'")
+
+    # A fixed-fit revision must never silently substitute a flattened copy for
+    # an image_path from the frozen manifest (notably for duplicate filenames).
+    if (str(study_cfg.get('execution_mode', 'optuna')).lower() == 'fixed_single_fit'
+            or study_cfg.get('materialized_images_only', False)):
+        for split, csv_path in (('train', train_csv), ('validation', val_csv), ('test', test_csv)):
+            if csv_path is None:
+                continue
+            frame = pd.read_csv(csv_path)
+            paths = frame['image_path']
+            missing = [str(path) for path in paths if pd.isna(path) or not os.path.isfile(str(path))]
+            if missing:
+                raise FileNotFoundError(
+                    f"{split} manifest has {len(missing)} unresolved image_path values; "
+                    f"first: {missing[0]}. Stage the selected images and rewrite paths in a derived CSV."
+                )
+            if study_cfg.get('materialized_images_only', False):
+                if 'source_image_path' not in frame:
+                    raise ValueError(f"{split} is not a materialized BPEX training view")
+                mismatched = [
+                    str(path) for path, name in zip(paths, frame['filename'])
+                    if os.path.realpath(str(path)) != os.path.realpath(os.path.join(images_folder, str(name)))
+                ]
+                if mismatched:
+                    raise ValueError(
+                        f"{split} has {len(mismatched)} image_path entries outside the "
+                        f"configured materialized images folder; first: {mismatched[0]}"
+                    )
 
     # Derived naming
     study_name = model_cfg.get('study_name') or f"{study_cfg['study_name_prefix']}_{model_cfg['name']}"
@@ -283,6 +379,64 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     train_t, val_t = build_transforms(model_type, img_size, resize_mode=resize_mode)
     pseudo_t = build_pseudo_augs(img_size, resize_mode=resize_mode)
 
+    def evaluate_selected_checkpoint(checkpoint_path: str, dropout_rate: float) -> Dict[str, Any] | None:
+        """Evaluate the held-out test set once, after validation checkpoint selection."""
+        if test_csv is None:
+            return None
+        if not os.path.isfile(test_csv):
+            raise FileNotFoundError(f"Configured held-out test manifest is missing: {test_csv}")
+        from sklearn.metrics import f1_score
+
+        train_labels = pd.read_csv(train_csv, usecols=['diagnosis_categories'])['diagnosis_categories'].dropna()
+        val_labels = pd.read_csv(val_csv, usecols=['diagnosis_categories'])['diagnosis_categories'].dropna()
+        classes = sorted(set(train_labels.astype(str)).union(val_labels.astype(str)))
+        test_frame = pd.read_csv(test_csv).dropna(subset=['diagnosis_categories', 'filename'])
+        if not set(test_frame['diagnosis_categories'].astype(str)).issubset(classes):
+            raise ValueError("Held-out test labels include a class missing from train/validation")
+
+        dataset = MultiSourceDatasetCSV(
+            test_csv, images_folder, transform=val_t,
+            label_col='diagnosis_categories', classes=classes,
+        ) if 'sample_weight' in test_frame.columns else OralLesionsDatasetCSV(
+            test_csv, images_folder, transform=val_t, classes=classes,
+        )
+        if len(dataset) != len(test_frame):
+            raise ValueError("Some held-out test images are missing; refusing partial evaluation")
+        loader = DataLoader(
+            dataset, batch_size=int(study_cfg.get('batch_size', 8)),
+            shuffle=False, num_workers=int(study_cfg.get('num_workers', 0)), pin_memory=True,
+        )
+        eval_cfg = dict(model_cfg)
+        eval_cfg['dropout_rate'] = dropout_rate
+        model = create_model(eval_cfg, num_classes=len(classes), device=device).to(device)
+        model.load_state_dict(torch.load(checkpoint_path, map_location=device, weights_only=True))
+        model.eval()
+        probabilities = []
+        with torch.inference_mode():
+            for batch in loader:
+                images = batch[0].to(device, non_blocking=True)
+                probabilities.append(torch.softmax(model(images), dim=1).cpu())
+        if getattr(dataset, '_bad_indices', None):
+            raise ValueError("Unreadable held-out images were substituted by the dataset loader")
+        scores = torch.cat(probabilities).numpy()
+        if len(scores) != len(dataset):
+            raise RuntimeError("Test prediction count does not match the held-out manifest")
+        output = dataset.data.drop(columns=['resolved_image_path'], errors='ignore').copy()
+        output['y_true'] = output['diagnosis_categories'].astype(str)
+        output['y_pred'] = [classes[index] for index in scores.argmax(axis=1)]
+        for index, label in enumerate(classes):
+            output[f'p_{label}'] = scores[:, index]
+        prediction_path = os.path.join(study_output_dir, 'test_predictions.csv')
+        if os.path.exists(prediction_path):
+            raise FileExistsError(f"Refusing to overwrite held-out predictions: {prediction_path}")
+        output.to_csv(prediction_path, index=False)
+        macro_f1 = float(f1_score(output['y_true'], output['y_pred'], labels=classes, average='macro', zero_division=0))
+        print(f"One-time held-out evaluation: macro F1={macro_f1:.4f}, n={len(output)}")
+        del model, loader, dataset
+        _release_cuda_memory()
+        return {'test_f1_macro': macro_f1, 'test_predictions': prediction_path,
+                'test_predictions_sha256': _file_sha256(prediction_path)}
+
     # Pseudolabel settings (env-aware)
     pl_cfg = dict(study_cfg.get('pseudolabel') or {})
     # Fill from env if not provided
@@ -302,8 +456,9 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     base_space = merge_search_space(base_space, study_cfg.get('search_space'))
     # Per-model overrides under model_cfg.search_space
     search_space = merge_search_space(base_space, model_cfg.get('search_space'))
+    execution_mode = str(study_cfg.get('execution_mode', 'optuna')).strip().lower()
 
-    # Helper to build supervised train/val/test loaders, optionally with class weights and/or WeightedRandomSampler.
+    # Helper to build supervised train/val loaders, optionally with class weights and/or WeightedRandomSampler.
     # If the training CSV includes a 'sample_weight' column (e.g., multisource CSV),
     # those weights are passed through MultiSourceDatasetCSV and combined with class weights.
     #
@@ -311,28 +466,34 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     #   - train_csv → used for supervised training (and pseudo-label training when enabled).
     #   - val_csv   → optimization/early-stopping split; macro F1 on this split is used
     #                 as the Optuna objective and for checkpoint selection.
-    #   - test_csv  → optional held-out evaluation split; metrics on this split are logged
-    #                 but are not used for early stopping or hyperparameter optimization.
+    #   - test_csv  → reserved for inference from the validation-selected checkpoint;
+    #                 it must not be evaluated during trials or retraining epochs.
     from collections import Counter
     use_sample_weights = False
+    normalize_sample_weights = bool(study_cfg.get('normalize_sample_weights', False))
 
-    def _make_supervised_loaders(batch_size: int, num_workers: int):
+    def _make_supervised_loaders(
+        batch_size: int,
+        num_workers: int,
+        train_csv_override: Optional[str] = None,
+    ):
         """
-        Return (dl_tr, dl_va, dl_te, num_classes_local, class_weights_tensor_or_None).
-        dl_te may be None if no explicit test split is configured.
+        Return (dl_tr, dl_va, None, num_classes_local, class_weights_tensor_or_None).
+        The held-out test CSV is not opened during training; evaluate the
+        validation-selected checkpoint separately after training has ended.
         """
-        nonlocal num_classes, use_sample_weights, test_csv
+        nonlocal num_classes, use_sample_weights
+
+        train_csv_local = train_csv_override or train_csv
 
         # Check whether CSV has explicit per-sample weights (e.g., multisource CSV)
         try:
-            has_sample_weight = 'sample_weight' in pd.read_csv(train_csv, nrows=1).columns
+            has_sample_weight = 'sample_weight' in pd.read_csv(train_csv_local, nrows=1).columns
         except Exception:
             has_sample_weight = False
 
         use_sample_weights = bool(has_sample_weight)
-        test_csv_exists = bool(test_csv and os.path.exists(test_csv))
-
-        if not (class_weights_enabled or sampler_enabled) and not use_sample_weights and not test_csv_exists:
+        if not (class_weights_enabled or sampler_enabled) and not use_sample_weights:
             # Simple path: no explicit weights, no sampler, no test split → use standard builder
             dl_tr, dl_va, num_classes_local = build_dataloaders(
                 train_csv,
@@ -347,21 +508,13 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
             num_classes = num_classes_local
             return dl_tr, dl_va, None, num_classes_local, None
 
-        # Manual path with explicit class mapping and optional weighting (and optional test split)
-        tr_df = pd.read_csv(train_csv).dropna(subset=['diagnosis_categories', 'filename'])
+        # Manual path with explicit class mapping and optional weighting
+        tr_df = pd.read_csv(train_csv_local).dropna(subset=['diagnosis_categories', 'filename'])
         va_df = pd.read_csv(val_csv).dropna(subset=['diagnosis_categories', 'filename'])
         tr_labels = tr_df['diagnosis_categories'].astype(str)
         va_labels = va_df['diagnosis_categories'].astype(str)
 
-        te_df = None
-        if test_csv_exists:
-            te_df = pd.read_csv(test_csv).dropna(subset=['diagnosis_categories', 'filename'])
-            te_labels = te_df['diagnosis_categories'].astype(str)
-            global_classes = sorted(
-                set(tr_labels.unique()).union(va_labels.unique()).union(te_labels.unique())
-            )
-        else:
-            global_classes = sorted(set(tr_labels.unique()).union(va_labels.unique()))
+        global_classes = sorted(set(tr_labels.unique()).union(va_labels.unique()))
         if not global_classes:
             raise ValueError("No classes found in training/validation CSVs for imbalance handling.")
         class_to_idx = {cls_name: idx for idx, cls_name in enumerate(global_classes)}
@@ -377,21 +530,34 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
         # - If 'sample_weight' present, use MultiSourceDatasetCSV so each sample returns its weight.
         # - Otherwise, fall back to OralLesionsDatasetCSV (class-balanced sampler only).
         if has_sample_weight:
-            ds_tr = MultiSourceDatasetCSV(train_csv, images_folder, transform=train_t, classes=global_classes)
+            ds_tr = MultiSourceDatasetCSV(
+                train_csv_local,
+                images_folder,
+                transform=train_t,
+                label_col='diagnosis_categories',
+                weight_col='sample_weight',
+                classes=global_classes,
+            )
             ds_va = MultiSourceDatasetCSV(val_csv, images_folder, transform=val_t, classes=global_classes)
-            ds_te = MultiSourceDatasetCSV(test_csv, images_folder, transform=val_t, classes=global_classes) if test_csv_exists else None
         else:
             ds_tr = OralLesionsDatasetCSV(train_csv, images_folder, transform=train_t, classes=global_classes)
             ds_va = OralLesionsDatasetCSV(val_csv, images_folder, transform=val_t, classes=global_classes)
-            ds_te = OralLesionsDatasetCSV(test_csv, images_folder, transform=val_t, classes=global_classes) if test_csv_exists else None
 
-        if len(ds_tr) == 0 or len(ds_va) == 0 or (ds_te is not None and len(ds_te) == 0):
-            raise ValueError("One of the datasets is empty. Check CSV paths and image files.")
+        if len(ds_tr) == 0 or len(ds_va) == 0:
+            raise ValueError("Training or validation dataset is empty. Check CSV paths and image files.")
 
         # Build training loader
         if sampler_enabled:
-            # WeightedRandomSampler based on class frequencies (ignores sample_weight column)
-            sample_weights = [class_weights_tensor[class_to_idx[y]] for y in tr_labels]
+            # WeightedRandomSampler based on class frequencies and optional per-sample weights.
+            if has_sample_weight and 'sample_weight' in tr_df.columns:
+                base_sample_weights = tr_df['sample_weight'].astype(float).fillna(1.0).tolist()
+            else:
+                base_sample_weights = [1.0] * len(tr_labels)
+
+            sample_weights = [
+                float(class_weights_tensor[class_to_idx[y]]) * float(sw)
+                for y, sw in zip(tr_labels.tolist(), base_sample_weights)
+            ]
             sampler = WeightedRandomSampler(
                 weights=sample_weights,
                 num_samples=len(sample_weights),
@@ -407,17 +573,55 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
         dl_va = DataLoader(ds_va, batch_size=batch_size, shuffle=False,
                            num_workers=num_workers, pin_memory=True)
 
-        dl_te = None
-        if ds_te is not None:
-            dl_te = DataLoader(ds_te, batch_size=batch_size, shuffle=False,
-                               num_workers=num_workers, pin_memory=True)
         num_classes = len(global_classes)
-        return dl_tr, dl_va, dl_te, num_classes, class_weights_tensor
+        return dl_tr, dl_va, None, num_classes, class_weights_tensor
+
+    def _build_merged_train_csv(
+        supervised_csv_path: str,
+        pseudo_csv_path: str,
+        out_csv_path: str,
+        pseudo_default_weight: float = 1.0,
+    ) -> tuple[str, int, int]:
+        sup_df = pd.read_csv(supervised_csv_path)
+        if 'diagnosis_categories' in sup_df.columns:
+            sup_label_col = 'diagnosis_categories'
+        elif 'coarse_label' in sup_df.columns:
+            sup_label_col = 'coarse_label'
+        else:
+            raise ValueError(
+                f"Could not find label column in supervised CSV {supervised_csv_path}. "
+                "Expected 'diagnosis_categories' or 'coarse_label'."
+            )
+
+        sup_df = sup_df.dropna(subset=['filename', sup_label_col]).copy()
+        sup_df = sup_df.rename(columns={sup_label_col: 'diagnosis_categories'})
+        if 'sample_weight' not in sup_df.columns:
+            sup_df['sample_weight'] = 1.0
+        sup_df = sup_df[['filename', 'diagnosis_categories', 'sample_weight']].copy()
+        sup_df['sample_weight'] = sup_df['sample_weight'].astype(float).fillna(1.0)
+        sup_df['is_pseudo'] = 0
+
+        pl_df = pd.read_csv(pseudo_csv_path)
+        if 'diagnosis_categories' not in pl_df.columns:
+            raise ValueError(
+                f"Pseudo CSV {pseudo_csv_path} must contain 'diagnosis_categories'."
+            )
+        pl_df = pl_df.dropna(subset=['filename', 'diagnosis_categories']).copy()
+        if 'sample_weight' not in pl_df.columns:
+            pl_df['sample_weight'] = float(pseudo_default_weight)
+        pl_df = pl_df[['filename', 'diagnosis_categories', 'sample_weight']].copy()
+        pl_df['sample_weight'] = pl_df['sample_weight'].astype(float).fillna(float(pseudo_default_weight))
+        pl_df['is_pseudo'] = 1
+
+        merged_df = pd.concat([sup_df, pl_df], axis=0, ignore_index=True)
+        os.makedirs(os.path.dirname(out_csv_path), exist_ok=True)
+        merged_df.to_csv(out_csv_path, index=False)
+        return out_csv_path, int(len(sup_df)), int(len(pl_df))
 
     # Static tags: Git + DVC dataset versions
-    git_tags = get_git_info(PROJECT_ROOT)
-    dvc_tags = collect_dvc_versions(
-        PROJECT_ROOT,
+    git_tags = get_git_info(PROJECT_ROOT, include_dirty=study_cfg.get('dataset_provenance') != 'frozen_manifest_sha256')
+    dvc_tags = _dataset_version_tags(
+        study_cfg,
         {
             "images_folder": images_folder,
             "train_csv": train_csv,
@@ -477,6 +681,7 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
         # Datasets / loaders
         try:
             dl_tr, dl_va, dl_te, num_classes, class_weights_tensor = _make_supervised_loaders(batch_size, num_workers)
+            merged_train_csv_path = None
 
             dl_pl, pl_stats = None, {}
             if pl_variant != "none":
@@ -498,10 +703,33 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
                     cache_dir=os.path.join(study_output_dir, 'pl_cache'),
                 )
 
+                pl_merge_enabled = bool(pl_cfg.get('merge_with_supervised', True))
+                pseudo_csv_path = (pl_stats or {}).get('_pseudo_csv_path')
+                pseudo_count = int((pl_stats or {}).get('_pseudo_count', 0))
+                if pl_merge_enabled and pseudo_csv_path and pseudo_count > 0:
+                    merged_train_csv_path = os.path.join(
+                        study_output_dir,
+                        f"trial_{trial.number}_merged_train.csv",
+                    )
+                    _, sup_n, pl_n = _build_merged_train_csv(
+                        supervised_csv_path=train_csv,
+                        pseudo_csv_path=pseudo_csv_path,
+                        out_csv_path=merged_train_csv_path,
+                        pseudo_default_weight=float(pl_cfg.get('pseudo_default_weight', 1.0)),
+                    )
+                    dl_tr, dl_va, dl_te, num_classes, class_weights_tensor = _make_supervised_loaders(
+                        batch_size,
+                        num_workers,
+                        train_csv_override=merged_train_csv_path,
+                    )
+                    dl_pl = None
+                    print(f"  Using merged supervised+pseudo loader (sup={sup_n}, pseudo={pl_n})")
+
             print(f"  Dataloaders: Sup={len(dl_tr)} | PL={0 if dl_pl is None else len(dl_pl)} | Val={len(dl_va)} | Test={0 if dl_te is None else len(dl_te)}")
         except Exception as e:
             print(f"ERROR building loaders: {e}")
             traceback.print_exc()
+            _release_cuda_memory()
             return 0.0
 
         # Model
@@ -517,6 +745,7 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
         except Exception as e:
             print(f"ERROR building model: {e}")
             traceback.print_exc()
+            _release_cuda_memory()
             return 0.0
 
         # Optimizer, schedulers, scaler, trainer
@@ -538,7 +767,15 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
         else:
             criterion = nn.CrossEntropyLoss(reduction='none')
 
-        trainer = Trainer(device=device, criterion=criterion, optimizer=optimizer, scheduler=sched_warm, scaler=scaler, callbacks=callbacks)
+        trainer = Trainer(
+            device=device,
+            criterion=criterion,
+            optimizer=optimizer,
+            scheduler=sched_warm,
+            scaler=scaler,
+            callbacks=callbacks,
+            normalize_sample_weights=normalize_sample_weights,
+        )
 
         def on_epoch_start(epoch_idx: int, model_ref: nn.Module):
             """
@@ -586,11 +823,22 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
             if f1 >= getattr(on_epoch_end, 'best_f1', -1):
                 on_epoch_end.best_f1 = f1
             # Track global best across trials
-            if f1 > global_tracker['best_f1']:
+            is_fixed_tie = execution_mode == 'fixed_single_fit' and f1 == global_tracker['best_f1']
+            if f1 > global_tracker['best_f1'] or is_fixed_tie:
                 global_tracker['best_f1'] = f1
                 global_tracker['trial_number'] = trial.number
                 global_tracker['epoch'] = int(log_row['epoch'])
                 torch.save(model.state_dict(), global_tracker['model_save_path'])
+                if study_cfg.get('persist_interim_best', False):
+                    interim = os.path.join(study_output_dir, 'best_model_study_inprogress.pth')
+                    staging = interim + '.tmp'
+                    shutil.copy2(global_tracker['model_save_path'], staging)
+                    os.replace(staging, interim)
+                    metadata = os.path.join(study_output_dir, 'best_model_study_inprogress.json')
+                    with open(metadata + '.tmp', 'w', encoding='utf-8') as handle:
+                        json.dump({key: global_tracker[key] for key in
+                                   ('best_f1', 'trial_number', 'epoch')}, handle)
+                    os.replace(metadata + '.tmp', metadata)
             # Optional: per-epoch MLflow logging (works with MLflowCallback run context)
             try:
                 if 'mlflow' in globals() and mlflow is not None and mlflow.active_run() is not None:
@@ -622,7 +870,7 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
                 ckpt_path=trial_ckpt,
                 train_loader_pl=dl_pl,
                 lambda_ramp_epochs=20,
-                test_loader=dl_te,
+                test_loader=None,
                 on_epoch_start=on_epoch_start,
                 on_epoch_end=on_epoch_end,
             )
@@ -646,12 +894,12 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
             del model, optimizer, sched_cos, sched_warm, scaler, trainer
         except Exception:
             pass
-        if device.type == 'cuda':
-            try:
-                gc.collect()
-                torch.cuda.empty_cache()
-            except Exception:
-                pass
+        try:
+            if merged_train_csv_path and os.path.exists(merged_train_csv_path):
+                os.remove(merged_train_csv_path)
+        except Exception:
+            pass
+        _release_cuda_memory()
 
         return best_val_f1
 
@@ -668,6 +916,86 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     n_trials = int(study_cfg.get('n_optuna_trials', 20))
     timeout = study_cfg.get('optuna_timeout')
 
+    if execution_mode == 'fixed_single_fit':
+        if pl_enabled:
+            raise ValueError("fixed_single_fit currently requires pseudolabel.enabled=false")
+        fixed_params = fixed_search_values(search_space)
+        fixed_outputs = (
+            os.path.join(study_output_dir, "fixed_fit_log.csv"),
+            os.path.join(study_output_dir, "fixed_fit_summary.json"),
+            os.path.join(study_output_dir, "best_model_fixed.pth"),
+        )
+        existing_fixed_outputs = [path for path in fixed_outputs if os.path.exists(path)]
+        if existing_fixed_outputs:
+            raise FileExistsError(
+                f"Fixed-fit outputs already exist; refuse ambiguous overwrite: {existing_fixed_outputs}"
+            )
+        print("\n==> Running explicit fixed single fit (Optuna search and retraining disabled)")
+        fixed_trial = optuna.trial.FixedTrial({}, number=0)
+        best_f1 = float(objective(fixed_trial, global_best_tracker))
+        source_log = os.path.join(study_output_dir, "trial_0_log.csv")
+        source_model = global_best_tracker['model_save_path']
+        if not os.path.isfile(source_log) or not os.path.isfile(source_model):
+            raise RuntimeError("Fixed fit did not produce its required log and checkpoint")
+
+        fixed_log = os.path.join(study_output_dir, "fixed_fit_log.csv")
+        compatibility_log = os.path.join(study_output_dir, "retrain_log.csv")
+        fixed_model = os.path.join(study_output_dir, "best_model_fixed.pth")
+        compatibility_model = os.path.join(study_output_dir, "best_model_retrain.pth")
+        shutil.copy2(source_log, fixed_log)
+        shutil.copy2(source_log, compatibility_log)
+        shutil.copy2(source_model, fixed_model)
+        shutil.copy2(source_model, compatibility_model)
+
+        fixed_frame = pd.read_csv(fixed_log)
+        if fixed_frame.empty or 'val_f1' not in fixed_frame.columns:
+            raise RuntimeError("Fixed fit log is empty or lacks val_f1")
+        selected = fixed_frame[fixed_frame['val_f1'] == fixed_frame['val_f1'].max()].iloc[-1]
+        heldout = evaluate_selected_checkpoint(fixed_model, float(fixed_params['dropout_rate']))
+        fixed_summary = {
+            'execution_mode': execution_mode,
+            'study_name': study_name,
+            'seed': seed,
+            'fixed_params': fixed_params,
+            'selected_epoch': int(selected['epoch']),
+            'val_f1': float(selected['val_f1']),
+            'test_f1_macro': heldout['test_f1_macro'] if heldout else None,
+            'test_predictions': heldout['test_predictions'] if heldout else None,
+            'test_predictions_sha256': heldout['test_predictions_sha256'] if heldout else None,
+            'train_csv': train_csv,
+            'train_csv_sha256': _file_sha256(train_csv),
+            'val_csv': val_csv,
+            'val_csv_sha256': _file_sha256(val_csv),
+            'test_csv': test_csv,
+            'test_csv_sha256': _file_sha256(test_csv),
+            'source_checkpoint': model_cfg.get('custom_model_path'),
+            'source_checkpoint_sha256': _file_sha256(model_cfg.get('custom_model_path')),
+            'fixed_fit_log': fixed_log,
+            'fixed_fit_log_sha256': _file_sha256(fixed_log),
+            'best_model_path': compatibility_model,
+            'best_model_sha256': _file_sha256(compatibility_model),
+            'fit_count': 1,
+        }
+        with open(os.path.join(study_output_dir, "fixed_fit_summary.json"), 'w', encoding='utf-8') as handle:
+            json.dump(fixed_summary, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return {
+            'model_name': model_cfg['name'],
+            'model_type': model_type,
+            'study_name': study_name,
+            'study_dir': study_output_dir,
+            'results_csv': None,
+            'best_f1': best_f1,
+            'best_trial': None,
+            'best_params': json.dumps(fixed_params, sort_keys=True),
+            'best_model_path': compatibility_model,
+            'execution_mode': execution_mode,
+            'fit_count': 1,
+        }
+    if execution_mode != 'optuna':
+        raise ValueError(f"Unknown study.execution_mode: {execution_mode}")
+
     try:
         study = optuna.create_study(
             study_name=study_name,
@@ -678,6 +1006,30 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
         )
         study.set_user_attr('model_type', model_type)
         study.set_user_attr('model_name', model_cfg['name'])
+        # Optuna's SQLite backend persists trial values, but the best weights
+        # otherwise live only in /tmp until final retraining. Restore both the
+        # score and weights before continuing a study across a VM STOP.
+        if study_cfg.get('persist_interim_best', False) and study.trials:
+            interim = os.path.join(study_output_dir, 'best_model_study_inprogress.pth')
+            metadata = os.path.join(study_output_dir, 'best_model_study_inprogress.json')
+            if os.path.isfile(interim):
+                if os.path.isfile(metadata):
+                    with open(metadata, encoding='utf-8') as handle:
+                        saved = json.load(handle)
+                    for key in ('best_f1', 'trial_number', 'epoch'):
+                        global_best_tracker[key] = saved[key]
+                else:
+                    # Compatibility with an already-running study whose
+                    # checkpoint backup predates the metadata sidecar.
+                    try:
+                        best = study.best_trial
+                    except ValueError:
+                        best = None
+                    if best is not None:
+                        global_best_tracker.update(best_f1=float(best.value),
+                                                   trial_number=best.number, epoch=-1)
+                shutil.copy2(interim, global_best_tracker['model_save_path'])
+                print(f"Restored interim study checkpoint (F1 {global_best_tracker['best_f1']:.4f})")
 
         # MLflow integration (optional)
         optuna_callbacks = []
@@ -799,6 +1151,25 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     except Exception:
         pass
 
+    required_finished = study_cfg.get('required_finished_optuna_trials')
+    if required_finished is not None:
+        from optuna.trial import TrialState
+
+        finished = sum(trial.state in (TrialState.COMPLETE, TrialState.PRUNED)
+                       for trial in study.trials)
+        if finished < int(required_finished):
+            print(f"Optuna study incomplete: {finished}/{required_finished} "
+                  "COMPLETE/PRUNED trials; retaining SQLite/interim checkpoint "
+                  "for a seed-specific resume, not retraining yet.")
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            _release_cuda_memory()
+            return {
+                'model_name': model_cfg['name'], 'study_name': study_name,
+                'study_dir': study_output_dir, 'results_csv': results_csv,
+                'completed_trials': finished, 'required_trials': int(required_finished),
+                'status': 'incomplete_study', 'best_model_path': None,
+            }
+
     # Final retraining for reproducibility
     print("\n-- Final retraining with best hyperparameters --")
     # Try Optuna's best_trial API first
@@ -843,16 +1214,21 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
             'best_model_path': None,
         }
 
+    # The Optuna trials consumed random state. Start the final retrain from the
+    # configured seed again, before DataLoader shuffling and model initialization.
+    set_seed(seed)
+
     # Build loaders (reuse imbalance strategy)
     batch_size_rt = int(study_cfg.get('batch_size', 8))
     num_workers_rt = int(study_cfg.get('num_workers', 0))
     dl_tr, dl_va, dl_te, num_classes_rt, class_weights_tensor_rt = _make_supervised_loaders(batch_size_rt, num_workers_rt)
+    merged_train_csv_rt = None
 
     # Rebuild PL (optional) using the same manager used in trials
     train_loader_pl = None
     if pl_enabled and bt_params.get('pl_variant', 'none') != 'none':
         try:
-            dl_pl, _ = build_pl_loader_from_cfg(
+            dl_pl, pl_stats_rt = build_pl_loader_from_cfg(
                 pl_cfg=pl_cfg,
                 model_cfg=model_cfg,
                 train_csv=train_csv,
@@ -869,9 +1245,30 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
                 pl_density_factor=float(bt_params.get('pl_density_factor', pl_cfg.get('density_factor', 0.5))),
                 cache_dir=os.path.join(study_output_dir, 'pl_cache'),
             )
-            train_loader_pl = dl_pl
+            pl_merge_enabled = bool(pl_cfg.get('merge_with_supervised', True))
+            pseudo_csv_path = (pl_stats_rt or {}).get('_pseudo_csv_path')
+            pseudo_count = int((pl_stats_rt or {}).get('_pseudo_count', 0))
+            if pl_merge_enabled and pseudo_csv_path and pseudo_count > 0:
+                merged_train_csv_rt = os.path.join(study_output_dir, 'retrain_merged_train.csv')
+                _, sup_n_rt, pl_n_rt = _build_merged_train_csv(
+                    supervised_csv_path=train_csv,
+                    pseudo_csv_path=pseudo_csv_path,
+                    out_csv_path=merged_train_csv_rt,
+                    pseudo_default_weight=float(pl_cfg.get('pseudo_default_weight', 1.0)),
+                )
+                dl_tr, dl_va, dl_te, num_classes_rt, class_weights_tensor_rt = _make_supervised_loaders(
+                    batch_size_rt,
+                    num_workers_rt,
+                    train_csv_override=merged_train_csv_rt,
+                )
+                train_loader_pl = None
+                print(f"  Retrain using merged supervised+pseudo loader (sup={sup_n_rt}, pseudo={pl_n_rt})")
+            else:
+                train_loader_pl = dl_pl
         except Exception:
             train_loader_pl = None
+
+    _release_cuda_memory()
 
     # Model + optimizer (reuse finetune strategy for retraining)
     retrain_cfg = dict(model_cfg)
@@ -900,7 +1297,15 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     best_retrain_path = os.path.join(tmp_dir, "best_model_retrain.pth")
 
     # Use the same Trainer API for retraining to keep behavior consistent
-    trainer_rt = Trainer(device=device, criterion=crit, optimizer=optimizer_rt, scheduler=sched_warm_rt, scaler=scaler_rt, callbacks=[])
+    trainer_rt = Trainer(
+        device=device,
+        criterion=crit,
+        optimizer=optimizer_rt,
+        scheduler=sched_warm_rt,
+        scaler=scaler_rt,
+        callbacks=[],
+        normalize_sample_weights=normalize_sample_weights,
+    )
 
     # Reuse finetuning strategy resolved earlier
     finetune_cfg_rt = _resolve_finetune_strategy(study_cfg, model_cfg)
@@ -965,10 +1370,16 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
             ckpt_path=best_retrain_path,
             train_loader_pl=train_loader_pl,
             lambda_ramp_epochs=20,
-            test_loader=dl_te,
+            test_loader=None,
             on_epoch_start=on_epoch_start_rt,
             on_epoch_end=on_epoch_end_rt,
         )
+    except Exception:
+        pass
+
+    try:
+        if merged_train_csv_rt and os.path.exists(merged_train_csv_rt):
+            os.remove(merged_train_csv_rt)
     except Exception:
         pass
 
@@ -976,6 +1387,10 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
     print(f"Best F1 (retrain): {best_f1_rt:.4f}")
     if os.path.exists(best_retrain_path):
         print(f"Best retrain model saved to: {best_retrain_path}")
+
+    heldout = evaluate_selected_checkpoint(
+        best_retrain_path, float(retrain_cfg['dropout_rate'])
+    ) if os.path.exists(best_retrain_path) else None
 
     # Persist best models inside the study directory so they remain available
     # after temporary directories are cleaned up.
@@ -1003,6 +1418,8 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
         'best_params': json.dumps(bt_params if bt_params else getattr(study.best_trial, 'params', {})),
         # Persist the path to the best retrain model inside the study directory (if available)
         'best_model_path': persistent_best_retrain_model if os.path.exists(persistent_best_retrain_model) else None,
+        'test_f1_macro': heldout['test_f1_macro'] if heldout else None,
+        'test_predictions': heldout['test_predictions'] if heldout else None,
     }
     # MLflow study-level logging (best across all trials)
     mlflow_cfg = study_cfg.get('mlflow') or {}
@@ -1076,8 +1493,31 @@ def run_study(study_cfg: Dict[str, Any], model_cfg: Dict[str, Any]) -> Dict[str,
 
 def main():
     import argparse
-    ap = argparse.ArgumentParser(description='Unified Optuna study for EffNet + ViT (YAML/JSON-driven)')
+    import pandas as pd
+    ap = argparse.ArgumentParser(
+        description='Unified Optuna study for EffNet + ViT (YAML/JSON-driven)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+╔══════════════════════════════════════════════════════════════════════════╗
+║  CHECKPOINT FINETUNING (classifier .pth → Optuna study):               ║
+║                                                                        ║
+║  Set pretrained_source: "checkpoint" in your model config and          ║
+║  point custom_model_path to your existing classifier .pth.             ║
+║                                                                        ║
+║  Example config:                                                       ║
+║    configs/studies/checkpoint_finetune_example.yaml                    ║
+║                                                                        ║
+║  Run:                                                                  ║
+║    python scripts/run_optuna_study.py \\                               ║
+║        --config configs/studies/checkpoint_finetune_example.yaml       ║
+║                                                                        ║
+║  Each trial initialises its model from the same checkpoint and         ║
+║  explores the hyperparameter space, with full Optuna tracking.         ║
+╚══════════════════════════════════════════════════════════════════════════╝
+        """,
+    )
     ap.add_argument('--config', '-c', required=True, help='Path to YAML/JSON study config')
+    ap.add_argument('--seed', type=int, help='Override study.seed (fixed fits get a seed-specific output directory)')
     ap.add_argument('--list', action='store_true', help='List models defined in the config and exit')
     args = ap.parse_args()
 
@@ -1091,6 +1531,10 @@ def main():
     global_cfg.setdefault('optuna_results_dir', os.environ.get('OPTUNA_RESULTS_DIR', os.path.join(PROJECT_ROOT, 'results', 'optuna_studies')))
     global_cfg.setdefault('study_name_prefix', 'UnifiedStudy')
     global_cfg.setdefault('base_data_dir', os.environ.get('DATASET_DIR', os.path.join(PROJECT_ROOT, 'data')))
+    if args.seed is not None:
+        global_cfg['seed'] = args.seed
+    if str(global_cfg.get('execution_mode', 'optuna')).lower() == 'fixed_single_fit':
+        global_cfg['study_name_prefix'] += f"_seed{global_cfg['seed']}"
 
     models: List[Dict[str, Any]] = cfg.get('models', [])
     if not models:
@@ -1103,6 +1547,7 @@ def main():
         return
 
     results: List[Dict[str, Any]] = []
+    failures: List[str] = []
     for mcfg in models:
         try:
             summary = run_study(global_cfg, mcfg)
@@ -1110,6 +1555,7 @@ def main():
         except Exception as e:
             print(f"Study for model '{mcfg.get('name')}' failed: {e}")
             traceback.print_exc()
+            failures.append(str(mcfg.get('name')))
 
     # Aggregate results
     try:
@@ -1118,6 +1564,8 @@ def main():
         print(f"Aggregated results saved to: {agg_path}")
     except Exception as e:
         print(f"Failed to save aggregated results: {e}")
+    if failures and str(global_cfg.get('execution_mode', 'optuna')).strip().lower() == 'fixed_single_fit':
+        raise SystemExit(f"Fixed single fit failed for model(s): {', '.join(failures)}")
 
 
 if __name__ == '__main__':

@@ -1,0 +1,73 @@
+{
+  "checks": {
+    "all_development_unions_match_expected_base": true,
+    "all_known_patient_partitions_are_disjoint": true,
+    "all_manifests_have_no_duplicate_paths": true,
+    "all_passed": true,
+    "all_variant_partitions_are_file_disjoint": true,
+    "base_duplicate_filenames_are_nonconflicting": true,
+    "base_has_no_duplicate_paths": true,
+    "internal_only_filename_multiplicity_matches_base": true,
+    "internal_only_is_file_disjoint": true,
+    "internal_only_is_patient_disjoint": true,
+    "internal_only_union_matches_base": true
+  },
+  "clinical_adjudication": "not performed as of this freeze",
+  "created_utc": "2026-09-24T19:39:03.039848+00:00",
+  "csv_sha256": {
+    "multisource_holdout_kaggle.csv": "340cc1400205ec9411e101a2536e4c0e641cc8908341c207faf70f9b49a57ec7",
+    "multisource_holdout_mendeley.csv": "5f10728013c1f6f3da64185cbd33ac17df56adac8dc0ef3c4409256d48ad40ff",
+    "multisource_holdout_zenodo.csv": "f96012ecb6a7a1939fbdef2dc05e68a1df8f42649e762d2381922bb231a8f0fd",
+    "multisource_test.csv": "6602ec5129e7863abeb0bfbab9ca9d2512a5d83d6a794f4d90a6687e26cfa284",
+    "multisource_test_global.csv": "6602ec5129e7863abeb0bfbab9ca9d2512a5d83d6a794f4d90a6687e26cfa284",
+    "multisource_test_no_kaggle.csv": "d96361633218f1fb1cc944f34df6a1d240c68763159eac159f46f08360ede5db",
+    "multisource_test_no_mendeley.csv": "71a06b8f35653f38cab68007609191db61aa02118abf686b817555009fe91127",
+    "multisource_test_no_zenodo.csv": "a3fe35143b08b8b759258662ce0076fa943d643a6b97db401d8d7250179757dc",
+    "multisource_train.csv": "4e749abd43437d5cd31614c865bc513f2aef0d8b07c2d7448e713182dc4a683d",
+    "multisource_train_global.csv": "39efdcad68ed3de96ea19bf97fd2dec987eac5f29e7fed55cbf2f8ce267d0746",
+    "multisource_train_no_kaggle.csv": "35db02a2db4949bdb34caaf259dbad2c74cd18899aef94f5734d6c82a48f2320",
+    "multisource_train_no_mendeley.csv": "eb0dce396d29c04812c8586851a023da44860822221d24e5939482ef57dd7fb2",
+    "multisource_train_no_zenodo.csv": "399f6b7c59be5b04f6248828c0c49a36638d239a423cb32467ee036ab0898af4",
+    "multisource_val.csv": "25647558ac11b513919aff93190aadc23c3a965becc64df0c4e87966de347b8e",
+    "multisource_val_global.csv": "b1067f1b78a9c85568572ae42fa5e61285a40c95770f527af812a8099abe3a63",
+    "multisource_val_no_kaggle.csv": "792ae5254e6ba471c940740c9af761b59cf008bc37f11a6e42c4c541772b646f",
+    "multisource_val_no_mendeley.csv": "66950e36419579a850f142c369aa58f298c5aee50be5142ac2aca052771ecf70",
+    "multisource_val_no_zenodo.csv": "1b9f500c3dbff5bb3a6e7a8fe77714f6e2cafdc06ae6232dbd6d3d75897a8ccf",
+    "new_test_test.csv": "32ae13729b035462c8cf2eda9cd8b050dd8033f4abe24c01d23e839a13362e63",
+    "new_test_train.csv": "e2562305c65f13623c2cb36da70a9c11e7ac2c0f6359d8ea31cb69885d72c8f5",
+    "test_dataset.csv": "cf48dc27a933d105058313f4b6179b43197f7784fd887f8a7f5a41bd5f3913df",
+    "test_dataset_multisource.csv": "73378f3265d8e2cf944d04345e0013d54f588834b7d811c795065bf2840df3ba"
+  },
+  "partition_rows": {
+    "global_validation": {
+      "test": 1209,
+      "train": 3228,
+      "val": 937
+    },
+    "internal_validation": {
+      "test": 1209,
+      "train": 3952,
+      "val": 213
+    },
+    "no_kaggle": {
+      "holdout": 1235,
+      "test": 952,
+      "train": 2994,
+      "val": 877
+    },
+    "no_mendeley": {
+      "holdout": 323,
+      "test": 1145,
+      "train": 3173,
+      "val": 733
+    },
+    "no_zenodo": {
+      "holdout": 3000,
+      "test": 563,
+      "train": 1397,
+      "val": 414
+    }
+  },
+  "snapshot": "data/processed/bpex_revision_v2_frozen_2026-09-24",
+  "source": "data/processed/bpex_revision_v2"
+}

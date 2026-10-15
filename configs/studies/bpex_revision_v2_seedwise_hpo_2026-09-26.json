@@ -1,0 +1,28 @@
+{
+  "experiment": "exploratory_seed_specific_optuna_followup",
+  "interpretation": "Separate exploratory seed-specific searches; do not combine with the frozen-hyperparameter five-seed comparison or replace its primary estimates.",
+  "results_directory": "results/revision_bpex/hpo_seedwise_corrected_global_v1",
+  "study_prefix": "BPEX_revision_v2_seedwise_global_val",
+  "models": ["effnet_b3", "effnet_b7", "vit_base", "vit_large"],
+  "seeds": [43, 44, 45, 46],
+  "trials_per_study": 50,
+  "selection_metric": "corrected global-validation macro F1",
+  "original_yaml_sha256": {
+    "effnet_b3": "365a7de1a40c9c8cc0455c7afd6f920d779a8ef0b6b85c5f2d38ac273839794d",
+    "effnet_b7": "17b95469bfd06effe129fdea15fb3e30eb6390994e9b55305f8802ad71997cf3",
+    "vit_base": "5efe2476f216422f2a18941a01fcbe2a9ae73f113e21dc252f69dc431c83dcf3",
+    "vit_large": "2ca9416bbc35d1f6875c4354be0a321e55cb0f7b8567c3648726fde437d290c8"
+  },
+  "cloud_train_val_sha256": {
+    "multisource_train_global.csv": "2999a7ba6c486e974823dd0b25ac2ffb98efd1a781eeb983e570216858a85051",
+    "multisource_val_global.csv": "ff45388a38dd814acf3aa09c39e5a5025a9fbde2a5735873e2834dd275c8de3a"
+  },
+  "local_materialized_source_sha256": {
+    "multisource_train_global.csv": "7acfcfc2e8919ddfdc380960f51c6982eb7110fa8d3bdddac27f27bb26e122e0",
+    "multisource_val_global.csv": "6dadc2d47eda0c91b82ba2b4f8c4983b8d42f78096ed3c16240a9252030af370"
+  },
+  "heldout_policy": "No test manifest or images during Optuna trials, retraining, or epoch selection; only a separate one-time validation-selected checkpoint evaluation after study completion.",
+  "vm": "<redacted>",
+  "project": "<redacted>",
+  "zone": "<redacted>"
+}

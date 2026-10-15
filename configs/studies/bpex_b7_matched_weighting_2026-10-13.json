@@ -1,0 +1,37 @@
+{
+  "experiment": "bpex_b7_matched_weighting_2026-10-13_v1",
+  "model": "effnet_b7",
+  "seeds": [42, 43, 44, 45, 46],
+  "conditions": ["baseline", "no_inverse_frequency"],
+  "epochs": 50,
+  "patience": 51,
+  "stopping_policy": "Patience exceeds the entire fit; all 50 epochs are required.",
+  "selection_metric": "validation macro-F1; latest epoch wins ties",
+  "control": "Remove only normalized inverse-frequency loss weights; retain CSV class/source sample weights.",
+  "shared_parameters": {
+    "dropout_rate": 0.36702319917976167,
+    "finetune_lr": 1.4370138156675946e-05,
+    "multiplier": 10,
+    "warmup_epochs": 1
+  },
+  "parameter_plan": "configs/studies/bpex_revision_v2_final_seeds_2026-09-26.json",
+  "freeze_record": "configs/studies/bpex_revision_v2_frozen_2026-09-24.json",
+  "frozen_directory": "data/processed/bpex_revision_v2_frozen_2026-09-24",
+  "materialized_directory": "data/processed/bpex_revision_v2_materialized_2026-09-24",
+  "frozen_csv_sha256": {
+    "multisource_train_global.csv": "39efdcad68ed3de96ea19bf97fd2dec987eac5f29e7fed55cbf2f8ce267d0746",
+    "multisource_val_global.csv": "b1067f1b78a9c85568572ae42fa5e61285a40c95770f527af812a8099abe3a63",
+    "multisource_test_global.csv": "6602ec5129e7863abeb0bfbab9ca9d2512a5d83d6a794f4d90a6687e26cfa284"
+  },
+  "materialized_csv_sha256": {
+    "multisource_train_global.csv": "7acfcfc2e8919ddfdc380960f51c6982eb7110fa8d3bdddac27f27bb26e122e0",
+    "multisource_val_global.csv": "6dadc2d47eda0c91b82ba2b4f8c4983b8d42f78096ed3c16240a9252030af370",
+    "multisource_test_global.csv": "1e44ebb0b77b85813d6a30e7bac29f51eababe5f486d1a5a47b7552e530b3513"
+  },
+  "partition_rows": {"multisource_train_global.csv": 3228, "multisource_val_global.csv": 937, "multisource_test_global.csv": 1209},
+  "results_directory": "results/revision_bpex/b7_matched_weighting_2026-10-13_v1",
+  "batch_size": 8,
+  "num_workers": 8,
+  "device": "cuda:0",
+  "test_policy": "Evaluate once after all 50 epochs and validation-only checkpoint selection; never evaluate test during epochs."
+}

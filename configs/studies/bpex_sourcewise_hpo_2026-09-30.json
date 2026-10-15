@@ -1,0 +1,422 @@
+{
+  "author_decision": "Four architectures, three source exclusions, five independent HPO seeds; 15-day extension granted.",
+  "experiment": "corrected_source_exclusion_independent_seed_hpo",
+  "heldout_policy": "No source holdout or in-domain test CSV in HPO/retraining. Evaluate selected checkpoints locally only after completion.",
+  "models": [
+    "effnet_b3",
+    "effnet_b7",
+    "vit_base",
+    "vit_large"
+  ],
+  "original_yaml_sha256": {
+    "effnet_b3": "365a7de1a40c9c8cc0455c7afd6f920d779a8ef0b6b85c5f2d38ac273839794d",
+    "effnet_b7": "17b95469bfd06effe129fdea15fb3e30eb6390994e9b55305f8802ad71997cf3",
+    "vit_base": "5efe2476f216422f2a18941a01fcbe2a9ae73f113e21dc252f69dc431c83dcf3",
+    "vit_large": "2ca9416bbc35d1f6875c4354be0a321e55cb0f7b8567c3648726fde437d290c8"
+  },
+  "results_directory": "results/revision_bpex/hpo_sourcewise_corrected_v1",
+  "retrain_epochs": 50,
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "selection_metric": "validation macro F1",
+  "source_train_val_sha256": {
+    "kaggle": {
+      "multisource_train_no_kaggle.csv": [
+        "8c132cb018fd89cfd0bb72dbabf3b6df0004599f5cec69632ae936b552f7faf8",
+        "5cb192e2e6b000690dfcf048747764848b46dcc9faff2cac26fed95ccfc7ff82"
+      ],
+      "multisource_val_no_kaggle.csv": [
+        "9dc943f0565a3fae0f6372a70354ed539518d9aa276129c04f684331807af9be",
+        "132e77c8ec1c629bec5c40599067882caa2c2cfb9bcff68c532d87c366be56e8"
+      ]
+    },
+    "mendeley": {
+      "multisource_train_no_mendeley.csv": [
+        "5d47a7dba6b00cb55dffe46d6aadb1413d5f065320f101590691f33f2ebe117c",
+        "da23d29d7490f3d6751bd365c25af891284846a3370b0ff8f81d3eff9761fea9"
+      ],
+      "multisource_val_no_mendeley.csv": [
+        "b33f5fc8d13870e7abaa288d41975579c5e9404775157595b0dc159f86f66c15",
+        "0fd254a378fb3ba238d825025f04b566a3300445ce3b35312709d5f1660ffed5"
+      ]
+    },
+    "zenodo": {
+      "multisource_train_no_zenodo.csv": [
+        "2820cb376401891c010ef5326d861182004e9ec5bde594616975ef9114698313",
+        "53724681676c3d91be4320100daea7fbae44a52ad2921080724e7b9cbb6f0cae"
+      ],
+      "multisource_val_no_zenodo.csv": [
+        "7a83ec3b8305c6febeaf62c4d1bb9cd97d5ec308af1aba6c5e65b5177f363731",
+        "21c77468f0e5606053543be0b763669a63b2dd4eb1e1b2e4ca36b61a7401fd1e"
+      ]
+    }
+  },
+  "tasks": [
+    {
+      "model": "effnet_b3",
+      "seed": 42,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 43,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 44,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 45,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 46,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 42,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 43,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 44,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 45,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 46,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_base",
+      "seed": 42,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 43,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 44,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 45,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 46,
+      "source": "kaggle",
+      "worker": "local"
+    },
+    {
+      "model": "vit_large",
+      "seed": 42,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 43,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 44,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 45,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 46,
+      "source": "kaggle",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 42,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 43,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 44,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 45,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 46,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 42,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 43,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 44,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 45,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 46,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_base",
+      "seed": 42,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 43,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 44,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 45,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 46,
+      "source": "zenodo",
+      "worker": "local"
+    },
+    {
+      "model": "vit_large",
+      "seed": 42,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 43,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 44,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 45,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 46,
+      "source": "zenodo",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 42,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 43,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 44,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 45,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b3",
+      "seed": 46,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 42,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 43,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 44,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 45,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "effnet_b7",
+      "seed": 46,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_base",
+      "seed": 42,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 43,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 44,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 45,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "vit_base",
+      "seed": 46,
+      "source": "mendeley",
+      "worker": "local"
+    },
+    {
+      "model": "vit_large",
+      "seed": 42,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 43,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 44,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 45,
+      "source": "mendeley",
+      "worker": "cloud"
+    },
+    {
+      "model": "vit_large",
+      "seed": 46,
+      "source": "mendeley",
+      "worker": "cloud"
+    }
+  ],
+  "trials_per_study": 50
+}

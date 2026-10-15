@@ -1,121 +1,59 @@
-# Local LLM Phrase Classification Protocol (llama.cpp + Qwen)
+# Diagnosis-phrase mapping protocol (local Qwen3)
 
-This document captures the exact protocol used to classify clinician free-text diagnosis phrases into coarse categories.
+Internal image labels come from diagnosis phrases written by dentists in
+Portuguese. The phrases were first reviewed and selected manually. A local
+language model then mapped each selected phrase to one of the four study
+classes: `healthy`, `benign_lesion`, `opmd` or `cancer`. Phrases that could not
+be mapped unambiguously were labelled `unknown` and excluded. No patient data
+left the institutional hardware.
 
-## Why this is separate from private notebooks
+## Model and runtime
 
-The original research notebook contains private/internal data handling and session curation logic that cannot be shared publicly.
-To keep the method reproducible, the LLM inference logic is published as standalone code:
-
-- `scripts/inference/run_phrase_classifier.py`
-- `src/inference/phrase_classifier.py`
-
-This allows full method transparency without exposing restricted data-processing code.
-
-## Categories
-
-The classifier outputs exactly one of:
-
-- `malignant`
-- `potentially_malignant`
-- `infectious`
-- `reactive_inflammatory`
-- `other`
-
-## Prompt format
-
-The assistant is prompted using a chat-template style string:
-
-```text
-<|im_start|>system
-{system_prompt}
-<|im_end|>
-<|im_start|>user
-{user_prompt}
-<|im_end|>
-<|im_start|>assistant
-```
-
-Default system prompt:
-
-```text
-You are Qwen3-30B-A3B-Thinking, a helpful reasoning assistant for clinical oral medicine. Think step by step, but FINAL output must be a single JSON object with keys: category, confidence, rationale.
-```
-
-User prompt (non-stream mode):
-
-```text
-Você é um classificador clínico de diagnósticos de Estomatologia.
-Atribua UMA categoria dentre as opções abaixo, com base na frase e no contexto (pt-BR).
-
-Categorias: ['malignant', 'potentially_malignant', 'infectious', 'reactive_inflammatory', 'other']
-Frase: {phrase_text}
-Contexto: {context}
-
-Responda APENAS com um JSON único, sem texto adicional, por exemplo:
-{"category": "malignant", "confidence": 0.92, "rationale": "…"}
-```
-
-## Decoding and runtime parameters
-
-### llama-server payload
-
-```json
-{
-  "n_predict": 4096,
-  "temperature": 0.6,
-  "top_p": 0.95,
-  "top_k": 20,
-  "presence_penalty": 1.0,
-  "stream": false
-}
-```
-
-### llama-cli flags (fallback when server is not used)
-
-- `-n 4096`
-- `-ngl 99`
-- `-c 4096`
-- `--temp 0.6`
-- `--top-p 0.95`
-- `--top-k 20`
-- `--presence-penalty 1.0`
-
-## Expected model output
-
-A single JSON object with:
-
-- `category` (enum above)
-- `confidence` (float in `[0, 1]`)
-- `rationale` (short explanation)
-
-If parsing fails or the model invocation fails, the pipeline falls back to deterministic rule-based classification and records a fallback rationale.
-
-## Environment variables
-
-- `LOCAL_LLM_SERVER_URL` (example: `http://127.0.0.1:8080/completion`)
-- `LOCAL_LLM_BIN` (path to `llama-cli`, only needed if server URL is not set)
-- `LOCAL_LLM_MODEL` (path to GGUF model, only needed if server URL is not set)
-
-Optional OpenAI/Azure backend variables are also supported in the same module.
-
-## Example usage
-
-Start `llama-server` (example):
+- Model: Qwen3-30B-A3B-Thinking-2507, Unsloth dynamic 3-bit GGUF quantisation
+  (`Qwen3-30B-A3B-Thinking-2507-UD-IQ3_XXS.gguf`).
+- Runtime: llama.cpp `llama-server`, all layers on the GPU (`-ngl 99`),
+  4,096-token context (`-c 4096`).
+- Generation: temperature 0.6, top-p 0.95, top-k 20, presence penalty 1.0,
+  up to 4,096 predicted tokens (`n_predict`).
 
 ```bash
-llama-server -m /path/to/Qwen3-30B-A3B-Thinking.gguf -ngl 99 -c 4096 --port 8080
-```
-
-Run phrase classification:
-
-```bash
+llama-server -m /path/to/Qwen3-30B-A3B-Thinking-2507-UD-IQ3_XXS.gguf \
+  -ngl 99 -c 4096 --host 127.0.0.1 --port 8080
 export LOCAL_LLM_SERVER_URL=http://127.0.0.1:8080/completion
-python scripts/inference/run_phrase_classifier.py \
-  --db data/app/romeu_unknown_phrases.sqlite \
-  --model local_llm \
-  --run-name qwen_local_v1 \
-  --prompt-version v1
 ```
 
-For Qwen2.5 family models, keep the same protocol and replace only the model file/path and run name.
+## Prompt
+
+The exact texts used for the article are in
+`papers/Multisource Classification/supplement/`:
+
+- `qwen_system_prompt.txt`: the system prompt with class definitions, examples
+  and decision rules (for example, carcinoma in situ or invasive carcinoma is
+  always `cancer`, even when an OPMD term is also present).
+- `qwen_user_template.txt`: the non-streaming user message, with placeholders
+  for the phrase and its context.
+- `qwen_chat_template.txt`: the ChatML wrapper sent to `llama-server`.
+
+The model reasons first and must end with a single JSON object containing
+`category`, `confidence` and `rationale`. The user template's example output
+uses `malignant`, which is not one of the four categories; the system prompt
+defines the valid ones.
+
+The request code is in `src/inference/phrase_classifier.py`, and
+`scripts/inference/run_phrase_classifier.py` is a command-line wrapper. Both
+read phrases from a local SQLite database that is not part of this
+repository. The module's default `CATEGORIES` list is an earlier
+five-category scheme. For the article (prompt version `v2_coarse4`) the list
+was set to the four study classes and `qwen_system_prompt.txt` was passed as
+`system_prompt`.
+
+## Deterministic comparison
+
+To check the mapping, an accent-normalised regular-expression classifier was
+written independently of the model:
+`papers/Multisource Classification/supplement/deterministic_classifier.py`
+(extracted from `scripts/analysis/audit_label_harmonization.py`). It covered
+249 of 259 phrase occurrences and agreed with Qwen3 on 242 of them (97.2%,
+Cohen's kappa 0.953). At image level the two agreed on 1,388 of 1,450 covered
+images (95.7%, kappa 0.923). Agreement with independent clinicians was not
+measured.

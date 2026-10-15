@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import argparse
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -100,9 +101,26 @@ def _build_loader(
     resize_mode: str,
     batch_size: int,
     num_workers: int,
+    roi_enabled: bool = False,
+    roi_model: Optional[torch.nn.Module] = None,
+    roi_target_size: int = 512,
+    roi_margin_frac: float = 0.12,
+    roi_conf: float = 0.25,
+    roi_force_landscape: bool = True,
 ) -> DataLoader:
     _, val_t = build_transforms(model_type, img_size, resize_mode=resize_mode)
-    ds = MultiSourceDatasetCSV(str(csv_path), str(images_folder), transform=val_t, classes=classes)
+    ds = MultiSourceDatasetCSV(
+        str(csv_path),
+        str(images_folder),
+        transform=val_t,
+        classes=classes,
+        roi_enabled=roi_enabled,
+        roi_model=roi_model,
+        roi_target_size=roi_target_size,
+        roi_margin_frac=roi_margin_frac,
+        roi_conf=roi_conf,
+        roi_force_landscape=roi_force_landscape,
+    )
     return DataLoader(ds, batch_size=batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
 
 
@@ -118,6 +136,16 @@ def _eval_split(
     top2_correct = 0
     top3_correct = 0
     total = 0
+
+    roi_stats_before = None
+    roi_stats_after = None
+    roi_stats_delta = None
+    ds = getattr(loader, "dataset", None)
+    if ds is not None and hasattr(ds, "get_roi_stats"):
+        try:
+            roi_stats_before = ds.get_roi_stats(reset=False)
+        except Exception:
+            roi_stats_before = None
 
     start_time = time.perf_counter()
     with torch.no_grad():
@@ -149,6 +177,18 @@ def _eval_split(
 
     elapsed = time.perf_counter() - start_time
     avg_sec_per_image = elapsed / total if total > 0 else None
+
+    if ds is not None and hasattr(ds, "get_roi_stats"):
+        try:
+            roi_stats_after = ds.get_roi_stats(reset=False)
+            if roi_stats_before is not None and roi_stats_after is not None:
+                keys = set(roi_stats_before.keys()) | set(roi_stats_after.keys())
+                roi_stats_delta = {
+                    k: int(roi_stats_after.get(k, 0)) - int(roi_stats_before.get(k, 0))
+                    for k in keys
+                }
+        except Exception:
+            roi_stats_delta = None
 
     # Raw confusion matrix in the native class-index order used during training.
     cm_raw = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
@@ -215,6 +255,7 @@ def _eval_split(
         "y_pred": y_pred,
         "classes_ordered": classes_ordered,
         "avg_sec_per_image": avg_sec_per_image,
+        "roi_stats": roi_stats_delta,
     }
 
 
@@ -245,7 +286,33 @@ def _format_topk(res: Dict) -> str:
     return " | ".join(parts)
 
 
-def main(base_config_path: Optional[str] = None) -> None:
+def _format_roi_stats(res: Dict) -> str:
+    stats = res.get("roi_stats") or {}
+    attempted = int(stats.get("attempted", 0))
+    if attempted <= 0:
+        return ""
+
+    detected = int(stats.get("detected", 0))
+    no_detection = int(stats.get("no_detection", 0))
+    failed = int(stats.get("failed", 0))
+    det_rate = detected / attempted if attempted > 0 else 0.0
+    return (
+        f" | ROI det/no-det/fail: {detected}/{no_detection}/{failed}"
+        f" ({det_rate:.1%} det)"
+    )
+
+
+def main(
+    base_config_path: Optional[str] = None,
+    metrics_log_path: Optional[str] = None,
+    roi_enable: bool = False,
+    roi_weights: Optional[str] = None,
+    roi_target_size: int = 512,
+    roi_margin: float = 0.12,
+    roi_conf: float = 0.25,
+    roi_force_landscape: bool = True,
+    holdout_only: bool = False,
+) -> None:
     """
     Batch confusion-matrix evaluation for multisource studies, mirroring the
     training batch runner in notebooks/experiments/run_optuna_studies.ipynb.
@@ -279,7 +346,30 @@ def main(base_config_path: Optional[str] = None) -> None:
     config_id = base_config.stem
     config_eval_dir = eval_root / config_id
     config_eval_dir.mkdir(parents=True, exist_ok=True)
-    metrics_log_path = eval_root / "batch_confusion_metrics.txt"
+    # Allow override of metrics log path for ROI benchmarks
+    if metrics_log_path is not None:
+        metrics_log_path = Path(metrics_log_path)
+    else:
+        metrics_log_path = eval_root / "batch_confusion_metrics.txt"
+    metrics_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load ROI YOLO model if enabled
+    roi_model = None
+    if roi_enable:
+        if roi_weights is None:
+            roi_weights = repo / "results" / "yolo_roi" / "v1024_gpu" / "weights" / "best.pt"
+        else:
+            roi_weights = Path(roi_weights)
+            if not roi_weights.is_absolute():
+                roi_weights = repo / roi_weights
+
+        if not roi_weights.exists():
+            raise FileNotFoundError(f"ROI weights not found: {roi_weights}")
+
+        print(f"[ROI] Loading YOLO model from: {roi_weights}")
+        from ultralytics import YOLO
+        roi_model = YOLO(str(roi_weights))
+        print(f"[ROI] YOLO model loaded successfully")
 
     cfg = load_config(str(base_config))
     base_study_cfg = dict(cfg.get("study", {}))
@@ -306,7 +396,7 @@ def main(base_config_path: Optional[str] = None) -> None:
 
 
     base_transfer_dir = Path(
-        os.environ.get("MULTISOURCE_BASE_DIR", str(repo / "data"))
+        os.environ.get("MULTISOURCE_BASE_DIR", "/home/fertroll10/Documents/Struct_mouth_dataset_merged")
     )
 
     multisource_images = Path(
@@ -498,7 +588,9 @@ def main(base_config_path: Optional[str] = None) -> None:
         any_found = True
 
         # Build global class list across this variant's splits + heldouts.
-        class_csvs: List[Path] = [train_csv, val_csv, test_csv]
+        # Always include train/val/test + holdout CSVs for checkpoint compatibility.
+        # The checkpoint was trained with labels from train/val/test, so class list must match.
+        class_csvs = [train_csv, val_csv, test_csv]
         for h in extra_holdouts.values():
             class_csvs.append(Path(h["csv"]))
         classes = _build_classes(class_csvs)
@@ -508,39 +600,72 @@ def main(base_config_path: Optional[str] = None) -> None:
         num_workers = int(study_cfg.get("num_workers", 0))
 
         # Train / val / test loaders shared across checkpoints.
-        dl_train = _build_loader(
-            train_csv,
-            images_folder,
-            classes,
-            model_type,
-            img_size,
-            resize_mode,
-            batch_size=batch_size,
-            num_workers=num_workers,
-        )
-        dl_val = _build_loader(
-            val_csv,
-            images_folder,
-            classes,
-            model_type,
-            img_size,
-            resize_mode,
-            batch_size=batch_size,
-            num_workers=num_workers,
-        )
+        # If ROI is enabled, force num_workers=0 to avoid multiprocessing issues
+        actual_num_workers = num_workers
+        if roi_enable and roi_model is not None and num_workers != 0:
+            print(f"[ROI] Forcing num_workers=0 (was {num_workers}) to avoid multiprocessing issues with shared YOLO model")
+            actual_num_workers = 0
 
+        # Skip train/val/test loaders in holdout-only mode
+        dl_train = None
+        dl_val = None
         dl_test = None
-        if test_csv.exists():
-            dl_test = _build_loader(
-                test_csv,
+
+        if not holdout_only:
+            dl_train = _build_loader(
+                train_csv,
                 images_folder,
                 classes,
                 model_type,
                 img_size,
                 resize_mode,
                 batch_size=batch_size,
-                num_workers=num_workers,
+                num_workers=actual_num_workers,
+                roi_enabled=roi_enable,
+                roi_model=roi_model,
+                roi_target_size=roi_target_size,
+                roi_margin_frac=roi_margin,
+                roi_conf=roi_conf,
+                roi_force_landscape=roi_force_landscape,
             )
+            dl_val = _build_loader(
+                val_csv,
+                images_folder,
+                classes,
+                model_type,
+                img_size,
+                resize_mode,
+                batch_size=batch_size,
+                num_workers=actual_num_workers,
+                roi_enabled=roi_enable,
+                roi_model=roi_model,
+                roi_target_size=roi_target_size,
+                roi_margin_frac=roi_margin,
+                roi_conf=roi_conf,
+                roi_force_landscape=roi_force_landscape,
+            )
+            dl_test = None
+            if test_csv.exists():
+                dl_test = _build_loader(
+                    test_csv,
+                    images_folder,
+                    classes,
+                    model_type,
+                    img_size,
+                    resize_mode,
+                    batch_size=batch_size,
+                    num_workers=actual_num_workers,
+                    roi_enabled=roi_enable,
+                    roi_model=roi_model,
+                    roi_target_size=roi_target_size,
+                    roi_margin_frac=roi_margin,
+                    roi_conf=roi_conf,
+                    roi_force_landscape=roi_force_landscape,
+                )
+        else:
+            dl_train = None
+            dl_val = None
+            dl_test = None
 
         for ckpt_label, ckpt_path in ckpt_specs:
             ckpt_header = f"--- Checkpoint: {ckpt_label} ({ckpt_path.name}) ---"
@@ -552,48 +677,54 @@ def main(base_config_path: Optional[str] = None) -> None:
             ckpt_eval_dir = config_eval_dir / ckpt_label
             ckpt_eval_dir.mkdir(parents=True, exist_ok=True)
 
-            res_train = _eval_split(dl_train, model, device, num_classes, classes)
-            res_val = _eval_split(dl_val, model, device, num_classes, classes)
+            # Evaluate train/val only if not in holdout-only mode
+            if dl_train is not None:
+                res_train = _eval_split(dl_train, model, device, num_classes, classes)
 
-            train_f1_bin = "n/a" if res_train["f1_binary"] is None else f"{res_train['f1_binary']:.4f}"
-            train_topk = _format_topk(res_train)
-            train_time = (
-                "n/a"
-                if res_train["avg_sec_per_image"] is None
-                else f"{res_train['avg_sec_per_image']*1000.0:.2f} ms/img"
-            )
-            train_line = (
-                f"[{ckpt_label} | {key} / train] {train_topk} | "
-                f"F1 macro: {res_train['f1_macro']:.4f} | "
-                f"F1 weighted: {res_train['f1_weighted']:.4f} | "
-                f"F1 binary (suspicious): {train_f1_bin} | "
-                f"avg time: {train_time}"
-            )
-            print(train_line)
-            metrics_lines.append(train_line)
+                train_f1_bin = "n/a" if res_train["f1_binary"] is None else f"{res_train['f1_binary']:.4f}"
+                train_topk = _format_topk(res_train)
+                train_time = (
+                    "n/a"
+                    if res_train["avg_sec_per_image"] is None
+                    else f"{res_train['avg_sec_per_image']*1000.0:.2f} ms/img"
+                )
+                train_line = (
+                    f"[{ckpt_label} | {key} / train] {train_topk} | "
+                    f"F1 macro: {res_train['f1_macro']:.4f} | "
+                    f"F1 weighted: {res_train['f1_weighted']:.4f} | "
+                    f"F1 binary (suspicious): {train_f1_bin} | "
+                    f"avg time: {train_time}"
+                )
+                train_line += _format_roi_stats(res_train)
+                print(train_line)
+                metrics_lines.append(train_line)
 
-            val_f1_bin = "n/a" if res_val["f1_binary"] is None else f"{res_val['f1_binary']:.4f}"
-            val_topk = _format_topk(res_val)
-            val_time = (
-                "n/a"
-                if res_val["avg_sec_per_image"] is None
-                else f"{res_val['avg_sec_per_image']*1000.0:.2f} ms/img"
-            )
-            val_line = (
-                f"[{ckpt_label} | {key} / val] {val_topk} | "
-                f"F1 macro: {res_val['f1_macro']:.4f} | "
-                f"F1 weighted: {res_val['f1_weighted']:.4f} | "
-                f"F1 binary (suspicious): {val_f1_bin} | "
-                f"avg time: {val_time}"
-            )
-            print(val_line)
-            metrics_lines.append(val_line)
-            _plot_confusion(
-                res_val["cm"],
-                res_val.get("classes_ordered", classes),
-                f"{key} – Confusion (val, {ckpt_label})",
-                save_path=ckpt_eval_dir / f"{key}_val_confusion.png",
-            )
+            if dl_val is not None:
+                res_val = _eval_split(dl_val, model, device, num_classes, classes)
+
+                val_f1_bin = "n/a" if res_val["f1_binary"] is None else f"{res_val['f1_binary']:.4f}"
+                val_topk = _format_topk(res_val)
+                val_time = (
+                    "n/a"
+                    if res_val["avg_sec_per_image"] is None
+                    else f"{res_val['avg_sec_per_image']*1000.0:.2f} ms/img"
+                )
+                val_line = (
+                    f"[{ckpt_label} | {key} / val] {val_topk} | "
+                    f"F1 macro: {res_val['f1_macro']:.4f} | "
+                    f"F1 weighted: {res_val['f1_weighted']:.4f} | "
+                    f"F1 binary (suspicious): {val_f1_bin} | "
+                    f"avg time: {val_time}"
+                )
+                val_line += _format_roi_stats(res_val)
+                print(val_line)
+                metrics_lines.append(val_line)
+                _plot_confusion(
+                    res_val["cm"],
+                    res_val.get("classes_ordered", classes),
+                    f"{key} – Confusion (val, {ckpt_label})",
+                    save_path=ckpt_eval_dir / f"{key}_val_confusion.png",
+                )
 
             if dl_test is not None:
                 res_test = _eval_split(dl_test, model, device, num_classes, classes)
@@ -611,6 +742,7 @@ def main(base_config_path: Optional[str] = None) -> None:
                     f"F1 binary (suspicious): {test_f1_bin} | "
                     f"avg time: {test_time}"
                 )
+                test_line += _format_roi_stats(res_test)
                 print(test_line)
                 metrics_lines.append(test_line)
                 _plot_confusion(
@@ -639,7 +771,13 @@ def main(base_config_path: Optional[str] = None) -> None:
                     img_size,
                     resize_mode,
                     batch_size=int(study_cfg.get("batch_size", 32)),
-                    num_workers=num_workers,
+                    num_workers=actual_num_workers,
+                    roi_enabled=roi_enable,
+                    roi_model=roi_model,
+                    roi_target_size=roi_target_size,
+                    roi_margin_frac=roi_margin,
+                    roi_conf=roi_conf,
+                    roi_force_landscape=roi_force_landscape,
                 )
                 res_holdout = _eval_split(dl_holdout, model, device, num_classes, classes)
                 holdout_f1_bin = "n/a" if res_holdout["f1_binary"] is None else f"{res_holdout['f1_binary']:.4f}"
@@ -656,6 +794,7 @@ def main(base_config_path: Optional[str] = None) -> None:
                     f"F1 binary (suspicious): {holdout_f1_bin} | "
                     f"avg time: {holdout_time}"
                 )
+                holdout_line += _format_roi_stats(res_holdout)
                 print(holdout_line)
                 metrics_lines.append(holdout_line)
                 _plot_confusion(
@@ -681,4 +820,69 @@ def main(base_config_path: Optional[str] = None) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Batch confusion evaluation for multisource studies")
+    parser.add_argument(
+        "--base-config-path",
+        type=str,
+        default=None,
+        help="Path to base study config YAML (optional)",
+    )
+    parser.add_argument(
+        "--metrics-log-path",
+        type=str,
+        default=None,
+        help="Path to output metrics log file (optional, defaults to results/evals/batch_confusion_metrics.txt)",
+    )
+    parser.add_argument(
+        "--roi-enable",
+        action="store_true",
+        help="Enable ROI cropping with YOLO model before classification",
+    )
+    parser.add_argument(
+        "--roi-weights",
+        type=str,
+        default=None,
+        help="Path to YOLO weights (default: results/yolo_roi/v1024_gpu/weights/best.pt)",
+    )
+    parser.add_argument(
+        "--roi-target-size",
+        type=int,
+        default=512,
+        help="Target size for ROI letterboxing (default: 512)",
+    )
+    parser.add_argument(
+        "--roi-margin",
+        type=float,
+        default=0.12,
+        help="Margin fraction for ROI expansion (default: 0.12)",
+    )
+    parser.add_argument(
+        "--roi-conf",
+        type=float,
+        default=0.25,
+        help="Confidence threshold for ROI detection (default: 0.25)",
+    )
+    parser.add_argument(
+        "--roi-no-force-landscape",
+        action="store_true",
+        help="Disable portrait-to-landscape rotation before ROI detection",
+    )
+    parser.add_argument(
+        "--holdout-only",
+        action="store_true",
+        help="Skip train/val/test evaluation and only evaluate holdout splits",
+    )
+
+    args = parser.parse_args()
+
+    main(
+        base_config_path=args.base_config_path,
+        metrics_log_path=args.metrics_log_path,
+        roi_enable=args.roi_enable,
+        roi_weights=args.roi_weights,
+        roi_target_size=args.roi_target_size,
+        roi_margin=args.roi_margin,
+        roi_conf=args.roi_conf,
+        roi_force_landscape=not args.roi_no_force_landscape,
+        holdout_only=args.holdout_only,
+    )

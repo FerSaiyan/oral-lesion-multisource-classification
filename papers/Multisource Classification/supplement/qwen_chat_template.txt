@@ -1,0 +1,7 @@
+<|im_start|>system
+{system_prompt}
+<|im_end|>
+<|im_start|>user
+{user_prompt}
+<|im_end|>
+<|im_start|>assistant

@@ -437,15 +437,24 @@ def classify_via_local_llm(
             debug_stream=debug_stream,
         )
 
-    bin_path = os.getenv("LOCAL_LLM_BIN", "llama-cli")
-    model_path = os.getenv("LOCAL_LLM_MODEL", "")
+    bin_path = os.getenv(
+        "LOCAL_LLM_BIN",
+        str(Path.home() / "Documents" / "ML" / "LocalLLM" / "llama.cpp" / "build" / "bin" / "llama-cli"),
+    )
+    model_path = os.getenv(
+        "LOCAL_LLM_MODEL",
+        str(
+            Path.home()
+            / "Documents"
+            / "ML"
+            / "LocalLLM"
+            / "llama.cpp"
+            / "models"
+            / "Qwen3-30B-A3B-Thinking-2507-UD-IQ3_XXS.gguf"
+        ),
+    )
     if not os.path.isfile(bin_path):
-        raise RuntimeError(
-            "LOCAL LLM binary not found. Set LOCAL_LLM_BIN to your llama-cli executable path. "
-            f"Current value: {bin_path}"
-        )
-    if not model_path:
-        raise RuntimeError("LOCAL_LLM_MODEL is not set. Please provide a GGUF model path.")
+        raise RuntimeError(f"LOCAL LLM binary not found at {bin_path}. Set LOCAL_LLM_BIN to override.")
     if not os.path.isfile(model_path):
         raise RuntimeError(f"LOCAL LLM model not found at {model_path}. Set LOCAL_LLM_MODEL to override.")
 

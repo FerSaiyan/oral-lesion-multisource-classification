@@ -26,10 +26,12 @@ def build_pseudolabel_csv(
     pl_high_thr: float,
     pl_density_min_p: float,
     pl_density_factor: float,
+    sample_weight_mode: str = "confidence",
+    sample_weight_floor: float = 0.2,
 ) -> Dict[str, int]:
     """
     Read teacher inference CSV (filename, pred_idx, p_max) and write a pseudo-label CSV:
-      filename, diagnosis_categories
+      filename, diagnosis_categories, p_max, sample_weight
     Returns per-class acceptance counts.
     Strategies:
       - "PL-H": global threshold, then per-class cap to min class count (balances).
@@ -38,7 +40,7 @@ def build_pseudolabel_csv(
     idx_to_label, _ = _get_class_mapping_from_train(train_csv_path)
     df_inf = pd.read_csv(unlabeled_infer_path)
     if df_inf.empty:
-        pd.DataFrame(columns=['filename', 'diagnosis_categories']).to_csv(out_infer_path, index=False)
+        pd.DataFrame(columns=['filename', 'diagnosis_categories', 'p_max', 'sample_weight']).to_csv(out_infer_path, index=False)
         return {}
 
     df_inf['pred_label'] = df_inf['pred_idx'].map(idx_to_label)
@@ -66,10 +68,15 @@ def build_pseudolabel_csv(
 
     if accepted.empty:
         print(f"[PL] No pseudo-labels accepted with strategy={strategy}.")
-        pd.DataFrame(columns=['filename', 'diagnosis_categories']).to_csv(out_infer_path, index=False)
+        pd.DataFrame(columns=['filename', 'diagnosis_categories', 'p_max', 'sample_weight']).to_csv(out_infer_path, index=False)
         return {}
 
-    df_pl = accepted[['filename', 'pred_label']].rename(columns={'pred_label': 'diagnosis_categories'})
+    df_pl = accepted[['filename', 'pred_label', 'p_max']].rename(columns={'pred_label': 'diagnosis_categories'})
+    if sample_weight_mode == "uniform":
+        df_pl['sample_weight'] = 1.0
+    else:
+        floor = max(0.0, min(1.0, float(sample_weight_floor)))
+        df_pl['sample_weight'] = df_pl['p_max'].astype(float).clip(lower=floor, upper=1.0)
     os.makedirs(os.path.dirname(out_infer_path), exist_ok=True)
     df_pl.to_csv(out_infer_path, index=False)
     counts = df_pl['diagnosis_categories'].value_counts().to_dict()

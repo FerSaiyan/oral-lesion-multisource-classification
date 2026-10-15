@@ -12,7 +12,7 @@ study:
   resize_mode: "preserve"
   class_weights: true      # still OK; combined with sample_weight in loss
   weighted_sampler: false
-  images_folder: null
+  images_folder: "/home/fertroll10/Documents/Struct_mouth_dataset_merged/Multisource_dataset_for_transfer_learning"
   train_csv_path: "data/processed/multisource_train.csv"
   val_csv_path:   "data/processed/multisource_val.csv"
   test_csv_path:  "data/processed/multisource_test.csv"
@@ -35,3 +35,4 @@ models:
     enet_backbone: "tf_efficientnet-b3_ns"
     pretrained_source: imagenet
     img_size: 384
+

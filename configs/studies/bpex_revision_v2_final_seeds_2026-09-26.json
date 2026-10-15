@@ -1,0 +1,83 @@
+{
+  "fixed_epochs": 50,
+  "fixed_patience": 5,
+  "models": {
+    "effnet_b3": {
+      "architecture": "effnet_b3_multisource",
+      "best_trial": 0,
+      "best_validation_macro_f1": 0.6095789369999876,
+      "original_yaml": "configs/studies/effnet_imagenet_b3_ar_multisource.yaml",
+      "original_yaml_sha256": "365a7de1a40c9c8cc0455c7afd6f920d779a8ef0b6b85c5f2d38ac273839794d",
+      "parameters": {
+        "dropout_rate": 0.4768239527256849,
+        "finetune_lr": 9.801602836499772e-06,
+        "multiplier": 9,
+        "warmup_epochs": 2
+      },
+      "study_database_sha256": "d9364192d0f83e75f050d931c1cb4b5b27e0e60601e4556db24e0615cf05c9d8",
+      "study_name": "BPEX_revision_v2_global_val_effnet_b3_effnet_b3_multisource",
+      "study_results_csv_sha256": "814f6ae8c2b990f9efbee998cb15913fbe8abb2cc5d0fe885dcecc9f8756db65"
+    },
+    "effnet_b7": {
+      "architecture": "effnet_b7_imagenet",
+      "best_trial": 4,
+      "best_validation_macro_f1": 0.6156573154851158,
+      "original_yaml": "configs/studies/effnet_imagenet_ar.yaml",
+      "original_yaml_sha256": "17b95469bfd06effe129fdea15fb3e30eb6390994e9b55305f8802ad71997cf3",
+      "parameters": {
+        "dropout_rate": 0.36702319917976167,
+        "finetune_lr": 1.4370138156675946e-05,
+        "multiplier": 10,
+        "warmup_epochs": 1
+      },
+      "study_database_sha256": "c52160650c49b504799e6156cfc5c7ee6dd4c5c6081a6c16b6500c148b7cd90b",
+      "study_name": "BPEX_revision_v2_global_val_effnet_b7_effnet_b7_imagenet",
+      "study_results_csv_sha256": "f0cbbb2a166d64461902c2cc60e8a5c3b47cba238afe40af059aa2517ad39a7b"
+    },
+    "vit_base": {
+      "architecture": "vit_base_imagenet",
+      "best_trial": 0,
+      "best_validation_macro_f1": 0.5887605991436636,
+      "original_yaml": "configs/studies/vit_base_imagenet_ar.yaml",
+      "original_yaml_sha256": "5efe2476f216422f2a18941a01fcbe2a9ae73f113e21dc252f69dc431c83dcf3",
+      "parameters": {
+        "dropout_rate": 0.4002305802178474,
+        "finetune_lr": 9.25431672413407e-06,
+        "multiplier": 3,
+        "warmup_epochs": 4
+      },
+      "study_database_sha256": "19b4b57766db017caf82fb0014ce596309b4dc4c5f9c9ea8e106ad67d3ad8d5d",
+      "study_name": "BPEX_revision_v2_global_val_vit_base_vit_base_imagenet",
+      "study_results_csv_sha256": "ac0f2efac85f7f8eeb3441b559562829b541a0462af73171333b77a1304da16c"
+    },
+    "vit_large": {
+      "architecture": "vit_large_imagenet",
+      "best_trial": 2,
+      "best_validation_macro_f1": 0.6334593480185093,
+      "original_yaml": "configs/studies/vit_large_imagenet_ar.yaml",
+      "original_yaml_sha256": "2ca9416bbc35d1f6875c4354be0a321e55cb0f7b8567c3648726fde437d290c8",
+      "parameters": {
+        "dropout_rate": 0.15538440976968143,
+        "finetune_lr": 2.0697011912901016e-06,
+        "multiplier": 13,
+        "warmup_epochs": 1
+      },
+      "study_database_sha256": "a6f798e8b7cc4779ca2498d2afb742e2bb1fe5684c33cf22d3440a528a123aa7",
+      "study_name": "BPEX_revision_v2_global_val_vit_large_vit_large_imagenet",
+      "study_results_csv_sha256": "8a6b4fffeeff3437b62dfab62cdfee81759fec4fcc058393dd64ff2366225912"
+    }
+  },
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46
+  ],
+  "selection_metric": "corrected global-validation macro F1",
+  "source_view_sha256": {
+    "multisource_test_global.csv": "1e44ebb0b77b85813d6a30e7bac29f51eababe5f486d1a5a47b7552e530b3513",
+    "multisource_train_global.csv": "7acfcfc2e8919ddfdc380960f51c6982eb7110fa8d3bdddac27f27bb26e122e0",
+    "multisource_val_global.csv": "6dadc2d47eda0c91b82ba2b4f8c4983b8d42f78096ed3c16240a9252030af370"
+  }
+}

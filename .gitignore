@@ -25,3 +25,12 @@ Thumbs.db
 
 # Environment files
 .env
+
+# Android build outputs
+scripts/npu/android_benchmark/build/
+scripts/npu/android_benchmark/.gradle/
+scripts/npu/android_benchmark/.kotlin/
+*.tflite
+*.safetensors
+*.db
+*.sqlite

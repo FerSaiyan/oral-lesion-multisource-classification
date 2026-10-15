@@ -12,7 +12,7 @@ def _norm_abs(path: str) -> str:
     return os.path.abspath(os.path.expanduser(path))
 
 
-def get_git_info(project_root: str) -> Dict[str, str]:
+def get_git_info(project_root: str, include_dirty: bool = True) -> Dict[str, str]:
     """Return basic Git info for the repo at project_root.
     Keys: git_commit, git_branch, git_dirty ("true"/"false").
     """
@@ -26,11 +26,13 @@ def get_git_info(project_root: str) -> Dict[str, str]:
             branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"]) or ""
         except Exception:
             branch = ""
-        try:
-            status = _run(["git", "status", "--porcelain"]) or ""
-            dirty = "true" if status else "false"
-        except Exception:
-            dirty = ""
+        dirty = "not_checked"
+        if include_dirty:
+            try:
+                status = _run(["git", "status", "--porcelain"]) or ""
+                dirty = "true" if status else "false"
+            except Exception:
+                dirty = ""
         info.update({"git_commit": commit, "git_branch": branch, "git_dirty": dirty})
     except Exception:
         pass

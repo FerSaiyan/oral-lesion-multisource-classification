@@ -1,78 +1,40 @@
-# Multisource Oral Lesion Classification (Oral Oncology)
+# Multi-dataset oral lesion classification
 
-This repository contains the training and evaluation code used for multiclass oral lesion classification experiments (healthy, benign lesion, OPMD, cancer).
+Code for the manuscript *Multi-dataset Deep Learning for Multiclass
+Classification of Oral Lesions* (under review). The models classify intraoral
+photographs as healthy, benign lesion, oral potentially malignant disorder
+(OPMD) or cancer. They were trained on one internal clinical sample and three
+public datasets (Zenodo, Kaggle and Mendeley) and evaluated on a pooled test
+set and on holdouts of each public source.
 
-GitHub: <https://github.com/FerSaiyan/oral-lesion-multisource-classification>
+Trained weights: <https://huggingface.co/Fertroll10/oral-lesions-multisource-classification>
 
-## What is included
+## What is not included
 
-- Optuna-based training pipeline for EfficientNet and ViT (`run_optuna_study.py`)
-- Batch confusion-matrix and hold-out evaluation script (`batch_confusion_eval_multisource.py`)
-- Phrase-level clinician free-text classification pipeline (`scripts/inference/run_phrase_classifier.py`, `src/inference/phrase_classifier.py`)
-- Redacted reproducible notebook for LLM phrase classification (`notebooks/public/llm_phrase_classification_demo.ipynb`)
-- Core model, dataset, training, and experiment utilities under `src/`
-- Study configuration files under `configs/studies/`
+The internal clinical images, their labels, the split manifests and the
+diagnosis-phrase database contain patient information and are not shared.
+The manifests also list internal images, so the pooled splits cannot be
+rebuilt from this repository alone. The public datasets must be obtained from
+their providers:
 
-## What is intentionally excluded
+- Zenodo: Piyarathne et al., [doi:10.5281/zenodo.10664056](https://doi.org/10.5281/zenodo.10664056)
+- Mendeley: Oral Images Dataset, version 2, [doi:10.17632/mhjyrn35p4.2](https://doi.org/10.17632/mhjyrn35p4.2)
+- Kaggle: [Oral Cancer Images for Classification](https://www.kaggle.com/datasets/muhammadatef/oral-cancer-images-for-classification)
 
-- Internal clinical dataset and any patient-identifiable data
-- Scraping/mining code and internal-system connectors
-- Web application code and diffusion/synthetic-data pipelines (separate projects)
+## Repository layout
 
-## Data access and restrictions
-
-The internal dataset used in the manuscript is not publicly shareable.
-Some external datasets may require permission from their data owners.
-To reproduce training/evaluation, obtain authorized copies of the datasets directly from their original providers.
-
-Expected split files (not included here) are referenced in:
-
-- `data/processed/multisource_train.csv`
-- `data/processed/multisource_val.csv`
-- `data/processed/multisource_test.csv`
-
-## Reproducibility (CSV schema and splits)
-
-The training/evaluation scripts are file-driven. Reproducing results requires providing CSV files with the expected columns.
-
-### 1) Supervised train/val/test CSVs
-
-Minimum required columns:
-
-- `filename`: image file name relative to `IMAGES_FOLDER`
-- `diagnosis_categories`: final class label used for training/evaluation
-
-Common optional columns (used in multisource experiments and reporting):
-
-- `coarse_label`
-- `coarse_label_id`
-- `fine_label`
-- `sample_weight` (if present, per-sample loss weighting is enabled)
-- `dataset_source`
-- `patient_id`
-- `session_id`
-- `group_id` / `group_all`
-- `image_path` (informational; loader uses `filename` + `IMAGES_FOLDER`)
-
-### 2) Pseudolabeling unlabeled CSV
-
-Minimum required column:
-
-- `filename`
-
-### 3) Split semantics used in this repository
-
-- `train_csv`: supervised training split
-- `val_csv`: validation split used for Optuna objective and checkpoint selection
-- `test_csv`: optional held-out split for reporting only (not used for optimization)
-
-## LLM free-text protocol
-
-The exact local LLM protocol (prompt template, decoding parameters, server/CLI setup, JSON schema, and fallback behavior) is documented in:
-
-- `docs/llm_phrase_classification_protocol.md`
-
-This is intentionally published outside private notebooks so the method remains reproducible without exposing restricted data-curation code.
+| Part of the paper | Code |
+|---|---|
+| Training and Optuna search (EfficientNet-B3/B7, ViT-Base/Large) | `scripts/run_optuna_study.py`, `src/`, `configs/studies/*.yaml` |
+| Patient-aware splits, corrected Zenodo patient parser (`_zenodo_patient_mapper`), source holdouts | `scripts/data/`, `scripts/analysis/{freeze,audit}_bpex_revision_splits.py`, `scripts/analysis/prepare_bpex_materialized_view.py` |
+| Five-seed searches and 50-epoch retrains | `scripts/analysis/run_bpex_revision_hpo.py`, `scripts/analysis/run_bpex_revision_final_seed.py`, `configs/studies/bpex_revision_v2_*.json` |
+| Source-exclusion experiments | `scripts/analysis/*bpex_sourcewise*.py`, `configs/studies/bpex_sourcewise_hpo_2026-09-30.json` |
+| Metrics, bootstrap intervals, paired tests, ROC/PR curves | `scripts/analysis/analyze_bpex_final_seeds.py`, `analyze_tuned_seedwise.py`, `build_bpex_review_metrics_bundle.py`, `plot_bpex_*.py` |
+| Supplement tables, calibration, ranked-list analysis, Grad-CAM panel | `papers/Multisource Classification/scripts/` |
+| Matched EfficientNet-B7 loss-weighting ablation (Supplementary S8) | `scripts/analysis/*bpex_b7_matched_weighting.py`, `configs/studies/bpex_b7_matched_weighting_2026-10-13.json` |
+| Desktop inference benchmark (Supplementary S7) | `scripts/analysis/*bpex_deployment*.py`, `benchmark_bpex_revision_inference.py`, `summarize_bpex_matched_timing.py` |
+| Phone GPU/NPU benchmark on the Galaxy Z Fold6 (Supplementary S7) | `scripts/npu/`, including the Android app in `scripts/npu/android_benchmark/` |
+| Diagnosis-phrase mapping with local Qwen3 and the deterministic comparison | `src/inference/phrase_classifier.py`, `scripts/analysis/audit_label_harmonization.py`, `docs/llm_phrase_classification_protocol.md`, `papers/Multisource Classification/supplement/` |
 
 ## Setup
 
@@ -82,67 +44,51 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-## Minimal run examples
+The original runs used Python 3.10, PyTorch 2.7 and timm 1.0.15. Several
+revision scripts stop unless they run inside a conda environment named
+`LocalGPT_llama2`; edit that check if you use a different environment.
 
-Train (EffNet B3 multisource):
+## Training on your own splits
 
-```bash
-python run_optuna_study.py --config configs/studies/effnet_imagenet_b3_ar_multisource.yaml
-```
+`scripts/run_optuna_study.py` runs an Optuna search followed by a retrain of
+the best configuration. It reads CSV manifests with at least `filename`
+(relative to the image folder) and `diagnosis_categories` (one of
+`benign_lesion`, `cancer`, `healthy`, `opmd`). Optional columns include
+`dataset_source`, `patient_id` and `sample_weight`.
 
-Train (ViT large):
-
-```bash
-python run_optuna_study.py --config configs/studies/vit_large_imagenet_ar.yaml
-```
-
-Batch confusion/evaluation:
-
-```bash
-python batch_confusion_eval_multisource.py --config configs/studies/effnet_imagenet_b3_ar_multisource.yaml
-```
-
-Phrase classification (local llama.cpp server):
+Copy one of the four study configs and set `images_folder`, `train_csv_path`
+and `val_csv_path` to your data. Values in the config take precedence over the
+`IMAGES_FOLDER`, `TRAIN_CSV` and `VAL_CSV` environment variables.
 
 ```bash
-export LOCAL_LLM_SERVER_URL=http://127.0.0.1:8080/completion
-python scripts/inference/run_phrase_classifier.py \
-  --db data/app/romeu_unknown_phrases.sqlite \
-  --model local_llm \
-  --run-name qwen_local_v1 \
-  --prompt-version v1
+cp configs/studies/effnet_imagenet_b3_ar_multisource.yaml my_b3.yaml
+# edit the path fields in my_b3.yaml
+python scripts/run_optuna_study.py --config my_b3.yaml
 ```
 
-## Recommended environment variables
+The four YAML files in `configs/studies/` are byte-identical to the ones used
+in the paper, so their SHA-256 hashes match those recorded in the frozen plans.
+Their path fields point to the original machines.
 
-Set these to point to your authorized local copies:
+## Reproducing the revision runs
 
-- `IMAGES_FOLDER`
-- `TRAIN_CSV`
-- `VAL_CSV`
-- `TEST_CSV`
-- `OPTUNA_RESULTS_DIR`
+The revision runners (`run_bpex_revision_hpo.py`, `run_bpex_revision_final_seed.py`,
+`run_bpex_b7_matched_weighting.py`) check every manifest against the SHA-256
+hashes in `configs/studies/bpex_revision_v2_frozen_2026-09-24.json` before
+training. Because those manifests include internal images, the runners can only
+be executed with the original data. They are published to document the exact
+protocol: five seeds (42 to 46), a 50-trial search per seed, a 50-epoch retrain,
+checkpoint selection by validation macro-F1, and one evaluation of each selected
+checkpoint on the frozen test set or source holdout. The supplement scripts
+under `papers/` also read private result files and are included for the same
+reason.
 
-For hold-out evaluation script:
+## Licence
 
-- `MULTISOURCE_BASE_DIR`
-- `MULTISOURCE_IMAGES`
-- `MULTISOURCE_NO_KAGGLE_IMAGES`
-- `MULTISOURCE_NO_ZENODO_IMAGES`
-- `MULTISOURCE_NO_MENDELEY_IMAGES`
-
-## Model checkpoints
-
-Trained model weights are released separately on Hugging Face:
-
-- `<https://huggingface.co/<org-or-user>/<model-collection>>`
-
-Model-weight license details: see `MODEL_WEIGHTS_LICENSE.md`.
+Code: Apache 2.0 (`LICENSE`). Model weights: CC BY-NC 4.0
+(`MODEL_WEIGHTS_LICENSE.md`). The terms of the original datasets also apply.
 
 ## Citation
 
-Manuscript-ready availability snippets and BibTeX templates are provided in `MANUSCRIPT_SNIPPETS.md`.
-
-## License
-
-Code in this repository is licensed under Apache License 2.0 (`LICENSE`).
+The manuscript is under review. A citation will be added here once it is
+published.
